@@ -137,15 +137,23 @@ def retrieve(question: str, top_k: int = 6) -> list:
         return []
 
     # Domanda generica? → usa tutta la Carta come contesto
-    is_generic = any(t in GENERIC_KEYWORDS for t in tokens) or len(tokens) < 4
-    if is_generic:
-        carta_chunks = [c for c in CORPUS if c.get('source') == 'carta']
-        if carta_chunks:
-            return carta_chunks
-
+    # Prima calcolo sempre BM25
     scores = BM25.get_scores(tokens)
     top_idx = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
-    return [CORPUS[i] for i in top_idx if scores[i] > 0]
+    top_chunks = [CORPUS[i] for i in top_idx if scores[i] > 0]
+    max_score = max(scores) if len(scores) > 0 else 0
+
+    # Query generica: parole tipo 'sintesi', 'riassunto', 'panoramica', o query molto corta senza match forti
+    has_generic_kw = any(t in GENERIC_KEYWORDS for t in tokens)
+    is_short_weak = len(tokens) < 4 and max_score < 3.0
+    if has_generic_kw or is_short_weak:
+        # Panoramica generale: articoli Carta + testi introduttivi principali
+        base = [c for c in CORPUS if c.get('source') == 'carta']
+        front = [c for c in CORPUS if c.get('source') == 'front' and c.get('kind') in ('introduction', 'preface')]
+        if base:
+            return front + base
+
+    return top_chunks
 
 
 def build_prompt(question: str, chunks: list, lang: str, history: list) -> tuple:
@@ -154,27 +162,33 @@ def build_prompt(question: str, chunks: list, lang: str, history: list) -> tuple
 
     if is_it:
         system = """Sei un assistente informativo della Fondazione Età Grande. Rispondi in italiano, in modo chiaro e conciso, basandoti ESCLUSIVAMENTE sui documenti forniti nel contesto:
-1) la Carta dei diritti degli anziani e dei doveri della società (di Mons. Vincenzo Paglia)
-2) la Legge 23 marzo 2023, n. 33
-3) il Decreto legislativo 15 marzo 2024, n. 29
+1) la Prefazione di Mons. Vincenzo Paglia, la Premessa degli autori e l'Introduzione al sito
+2) la Carta dei diritti degli anziani e dei doveri della società (di Mons. Vincenzo Paglia)
+3) la Legge 23 marzo 2023, n. 33
+4) il Decreto legislativo 15 marzo 2024, n. 29
 
 REGOLE:
-- Rispondi SOLO su temi legati alla Carta o alla normativa italiana sull'assistenza agli anziani.
-- Cita sempre le fonti pertinenti indicando articolo e comma (es. "Carta, art. 5, comma 2" o "DLgs 29/2024, art. 27").
-- Se la risposta non è nei documenti forniti, dillo apertamente: "Su questo la Carta e la normativa non offrono elementi diretti."
+- Rispondi SOLO su temi legati alla Carta, ai suoi testi introduttivi o alla normativa italiana sull'assistenza agli anziani.
+- Per la Carta e la normativa cita sempre articolo e comma (es. "Carta, art. 5, comma 2" o "DLgs 29/2024, art. 27").
+- Per Prefazione, Premessa e Introduzione cita così: "Prefazione", "Premessa", "Introduzione al sito".
+- Per domande su persone menzionate nella Prefazione o nella Premessa (es. autori, curatori, membri della Commissione), riporta fedelmente quanto scritto in quei testi.
+- Se la risposta non è nei documenti forniti, dillo apertamente: "Su questo la Carta, i testi introduttivi e la normativa non offrono elementi diretti."
 - Non aggiungere opinioni personali né interpretazioni giuridiche vincolanti.
 - Usa un registro pacato, informativo, adatto a lettori non specialisti.
 - Massimo 3-4 paragrafi brevi. Se serve una lista, tienila essenziale."""
     else:
         system = """You are an informational assistant of Fondazione Età Grande and AEGIS Foundation. Answer in English, clearly and concisely, based EXCLUSIVELY on the documents provided in context:
-1) the Charter of the Rights of Older Persons and Duties of Society (by Msgr. Vincenzo Paglia)
-2) Italian Law 23 March 2023, no. 33
-3) Italian Legislative Decree 15 March 2024, no. 29
+1) the Foreword by Bishop Vincenzo Paglia, the Introduction by the authors, and the About page of this website
+2) the Charter of the Rights of Older Persons and Duties of Society (by Msgr. Vincenzo Paglia)
+3) Italian Law 23 March 2023, no. 33
+4) Italian Legislative Decree 15 March 2024, no. 29
 
 RULES:
-- Answer ONLY on topics related to the Charter or Italian legislation on care for older persons.
-- Always cite relevant sources indicating article and paragraph (e.g. "Charter, art. 5, para. 2" or "Legislative Decree 29/2024, art. 27").
-- If the answer is not in the provided documents, say so openly: "The Charter and the legislation do not directly address this."
+- Answer ONLY on topics related to the Charter, its introductory texts, or Italian legislation on care for older persons.
+- For the Charter and legislation always cite article and paragraph (e.g. "Charter, art. 5, para. 2" or "Legislative Decree 29/2024, art. 27").
+- For Foreword, Introduction and About page, cite as: "Foreword", "Introduction (Authors)", "About this website".
+- For questions about people mentioned in the Foreword or Introduction (e.g. authors, curators, Commission members), report faithfully what those texts state.
+- If the answer is not in the provided documents, say so openly: "The Charter, the introductory texts and the legislation do not directly address this."
 - Do not add personal opinions or binding legal interpretations.
 - Use a calm, informative tone suitable for non-specialist readers.
 - Maximum 3-4 short paragraphs. If a list is needed, keep it essential."""
@@ -185,7 +199,11 @@ RULES:
         label = c['source_label_it'] if is_it else (c['source_label_en'] or c['source_label_it'])
         text = c['text'] if (is_it or not c.get('text_en')) else c['text_en']
         title = c['title'] if is_it else (c.get('title_en') or c['title'])
-        context_parts.append(f"--- {label}, Art. {c['num']} — {title} ---\n{text}")
+        # I chunk di 'front' (Prefazione/Premessa/Introduzione) non hanno numero articolo
+        if c.get('source') == 'front':
+            context_parts.append(f"--- {label}: {title} ---\n{text}")
+        else:
+            context_parts.append(f"--- {label}, Art. {c['num']} — {title} ---\n{text}")
     context = '\n\n'.join(context_parts)
 
     if is_it:
