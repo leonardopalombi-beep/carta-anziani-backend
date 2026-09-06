@@ -118,6 +118,10 @@ class Citation(BaseModel):
     title: str
     source: str
     num: int
+    articolo_id: Optional[str] = None
+    area: Optional[str] = None
+    ricerca_id: Optional[str] = None
+    capitolo_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -173,14 +177,24 @@ def build_prompt(question: str, chunks: list, lang: str, history: list) -> tuple
 9) il Piano Nazionale Demenze
 10) la Legge 15 marzo 2010, n. 38 (cure palliative e terapia del dolore)
 11) la ricognizione della normativa istitutiva e regolatoria delle Residenze Assistenziali (RA) e delle Residenze Sanitarie Assistenziali (RSA) — quadro nazionale e schede per ciascuna regione italiana e per le Province autonome di Trento e Bolzano
+12) la sezione «Il pensiero», organizzata in quattro sotto-aree:
+   a) articoli, interviste ed editoriali di Mons. Vincenzo Paglia sugli anziani;
+   b) ricerche scientifiche sul tema dell'invecchiamento (62 pubblicazioni verificate, 1990-2026) del gruppo di Leonardo Palombi e Giuseppe Liotta (Dipartimento di Biomedicina e Prevenzione, Università di Roma Tor Vergata) e collaboratori, sui temi di fragilità, mortalità, valutazione geriatrica multidimensionale, RSA/ADI, screening territoriale;
+   — inclusa nella sotto-area «articoli e interventi di Mons. Paglia» l'opera monografica «L'Età Grande: la nuova legge per gli anziani» (Edizioni LSWR 2024), volume in 7 capitoli che analizza la Legge 33/2023 e il decreto legislativo 29/2024 con la Carta dei diritti come orizzonte ideale, le aree di intervento, la visione, gli obiettivi politici e la sperimentazione del Progetto Anchise nella Regione Lazio;
+   c) contributi della Comunità di Sant'Egidio;
+   d) i documenti ufficiali della Commissione ministeriale per la riforma dell'assistenza agli anziani (presieduta da Mons. Paglia con il Prof. Palombi come Segretario), tra cui l'editoriale del 13 marzo 2021, la «Sintesi finale della proposta al Presidente Draghi» («L'abitazione come luogo di cura per gli anziani») e il DDL sulle deleghe in materia di politiche per gli anziani approvato dal Governo Draghi il 10 ottobre 2022, base della successiva Legge 33/2023.
 
 REGOLE:
-- Rispondi SOLO su temi legati alla Carta, ai suoi testi introduttivi o alla normativa italiana sull'assistenza agli anziani (incluse RA e RSA regionali).
+- Rispondi SOLO su temi legati alla Carta, ai suoi testi introduttivi, alla normativa italiana sull'assistenza agli anziani (incluse RA e RSA regionali) o al contenuto degli articoli della sezione «Il pensiero».
 - Per la Carta e la normativa nazionale cita sempre articolo e comma (es. "Carta, art. 5, comma 2", "L. 328/2000, art. 22", "DPCM 12/1/2017 (LEA), art. 30", "DM 77/2022").
 - Per RA e RSA regionali cita così: "RA — Lombardia", "RSA — Emilia-Romagna", e — quando presenti nei documenti — le specifiche leggi regionali o DGR (es. "LR Piemonte 12/2009", "DGR Lazio 143/2019").
 - Per il quadro nazionale RSA (istitutivo) cita "RSA — quadro nazionale" indicando la fonte primaria (art. 20 L. 67/1988, DPCM 22/12/1989, DPCM 14/2/2001, DPCM LEA 2017).
 - Per Prefazione, Premessa e Introduzione cita così: "Prefazione", "Premessa", "Introduzione al sito".
 - Per i Piani nazionali cita: "Piano Nazionale della Cronicità", "Piano Nazionale Demenze".
+- Per gli articoli della sezione «Il pensiero» cita così: «Il pensiero — [autore], “[titolo]”», indicando la testata quando disponibile (es. «Il pensiero — Vincenzo Paglia, “La cura che cambia: il Piemonte sceglie il territorio”»).
+- Per il libro cita così: «V. Paglia, “L’Età Grande: la nuova legge per gli anziani”, LSWR 2024, cap. [titolo]».
+- Per le pubblicazioni scientifiche cita autori, rivista e anno, es.: «Gilardi et al., European Journal of Public Health 2018», oppure «Liotta et al., PLoS ONE 2020».
+- Riporta sempre i dati quantitativi (n=..., HR=..., IC95%, p-value) quando presenti negli abstract.
 - Per domande su persone menzionate nella Prefazione o nella Premessa (es. autori, curatori, membri della Commissione), riporta fedelmente quanto scritto in quei testi.
 - Se la risposta non è nei documenti forniti, dillo apertamente: "Su questo il corpus di riferimento non offre elementi diretti."
 - Non aggiungere opinioni personali né interpretazioni giuridiche vincolanti.
@@ -199,6 +213,11 @@ REGOLE:
 9) National Dementia Plan
 10) Law 15 March 2010, no. 38 (palliative care and pain therapy)
 11) survey of the founding and regulatory legislation on Assisted-Living Residences (RA) and Nursing Homes (RSA) — national framework and profiles for each Italian region and for the Autonomous Provinces of Trento and Bolzano
+12) the «Il pensiero» section, organised in four sub-areas:
+   a) articles, interviews and editorials by Msgr. Vincenzo Paglia on older persons;
+   b) scientific research on ageing (62 verified publications, 1990-2026) by the group of Leonardo Palombi and Giuseppe Liotta (Department of Biomedicine and Prevention, University of Rome Tor Vergata) and collaborators, covering frailty, mortality, multidimensional geriatric assessment, RSA/ADI, community screening;
+   c) contributions from the Community of Sant'Egidio;
+   d) the official documents of the Ministerial Commission for the reform of elderly care (chaired by Msgr. Paglia, with Prof. Palombi as Secretary), including the editorial of 13 March 2021, the «Final Synthesis of the Proposal to Prime Minister Draghi» («The home as a place of care for older people») and the draft law on delegations for policies on older persons approved by the Draghi Government on 10 October 2022, which formed the basis for Law 33/2023.
 
 RULES:
 - Answer ONLY on topics related to the Charter, its introductory texts, or Italian legislation on care for older persons (including regional RA and RSA).
@@ -220,7 +239,7 @@ RULES:
         text = c['text'] if (is_it or not c.get('text_en')) else c['text_en']
         title = c['title'] if is_it else (c.get('title_en') or c['title'])
         # I chunk di 'front' (Prefazione/Premessa/Introduzione) e i Piani non hanno numero articolo tradizionale
-        if c.get('source') in ('front', 'pnc', 'pnd', 'dm77', 'ra_reg', 'rsa_reg', 'rsa_naz'):
+        if c.get('source') in ('front', 'pnc', 'pnd', 'dm77', 'ra_reg', 'rsa_reg', 'rsa_naz', 'pensiero', 'ricerca', 'libro'):
             context_parts.append(f"--- {label}: {title} ---\n{text}")
         else:
             context_parts.append(f"--- {label}, Art. {c['num']} — {title} ---\n{text}")
@@ -284,14 +303,28 @@ async def chat(req: ChatRequest):
                    "Service temporarily unavailable. Please try again in a moment.")
         return ChatResponse(answer=err_msg, citations=[])
 
+    # Deduplica citazioni per articolo_id o (source, num) per non mostrare
+    # più chunk dello stesso articolo di pensiero
+    seen = set()
+    unique_chunks = []
+    for c in chunks:
+        key = c.get('articolo_id') or f"{c.get('source')}-{c.get('num')}"
+        if key in seen: continue
+        seen.add(key)
+        unique_chunks.append(c)
+
     citations = [
         Citation(
             id=c['id'],
             title=c['title'] if req.lang == 'it' else (c.get('title_en') or c['title']),
             source=c['source_label_it'] if req.lang == 'it' else (c['source_label_en'] or c['source_label_it']),
             num=c['num'],
+            articolo_id=c.get('articolo_id'),
+            area=c.get('area'),
+            ricerca_id=c.get('ricerca_id'),
+            capitolo_id=c.get('capitolo_id'),
         )
-        for c in chunks[:4]  # Mostra max 4 fonti
+        for c in unique_chunks[:4]  # Mostra max 4 fonti
     ]
 
     return ChatResponse(answer=answer, citations=citations)
