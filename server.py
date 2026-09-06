@@ -132,17 +132,40 @@ class ChatResponse(BaseModel):
 
 GENERIC_KEYWORDS = {'sintesi', 'riassunto', 'pensiero', 'filosofia', 'visione', 'novita', 'novità', 'panoramica', 'introduzione', 'overview', 'summary', 'philosophy', 'principi', 'cultura', 'spiegami', 'raccontami', 'presenta', 'presentami', 'illustra'}
 
+# Keyword economiche/quantitative: se presenti, includiamo FORZATAMENTE i chunk costi_nazionale
+# per evitare che il ranker BM25 favorisca solo Paglia/libro/pensiero
+ECONOMIC_KEYWORDS = {
+    'costo', 'costi', 'spesa', 'spese', 'spendiamo', 'spende', 'spendere',
+    'miliardi', 'miliardo', 'milioni', 'mln', 'mld', 'euro', 'eur',
+    'quanto', 'quanta', 'quanti', 'quante',
+    'budget', 'bilancio', 'finanziamento', 'finanziamenti', 'risorse',
+    'tariffa', 'tariffe', 'retta', 'rette', 'quota', 'quote',
+    'inappropriatezza', 'inappropriati', 'oltresoglia', 'oltre-soglia',
+    'drg', 'agenas', 'istat', 'sha', 'ocse', 'oecd', 'gimbe', 'cergas',
+    'silver', 'pil', 'gdp',
+    'cost', 'costs', 'spend', 'spending', 'billion', 'billions', 'million', 'millions',
+    'how much', 'budget', 'funding', 'resources', 'tariff', 'fee', 'fees',
+}
+
+def _has_economic_intent(tokens_set: set, raw_question: str) -> bool:
+    """True se la domanda è economica/quantitativa e va servita col contesto Costi."""
+    if tokens_set & ECONOMIC_KEYWORDS:
+        return True
+    q = raw_question.lower()
+    if 'how much' in q or 'quanto costa' in q or 'quanto spend' in q:
+        return True
+    return False
+
 def retrieve(question: str, top_k: int = 6) -> list:
     """BM25 retrieval — restituisce i top-K chunks più rilevanti.
 
     Per domande generali/di sintesi, ricadiamo su TUTTI i 18 articoli della Carta.
+    Per domande economiche, forziamo l'inclusione dei chunk della sezione Costi.
     """
     tokens = tokenize(question)
     if not tokens:
         return []
 
-    # Domanda generica? → usa tutta la Carta come contesto
-    # Prima calcolo sempre BM25
     scores = BM25.get_scores(tokens)
     top_idx = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
     top_chunks = [CORPUS[i] for i in top_idx if scores[i] > 0]
@@ -157,6 +180,29 @@ def retrieve(question: str, top_k: int = 6) -> list:
         front = [c for c in CORPUS if c.get('source') == 'front' and c.get('kind') in ('introduction', 'preface')]
         if base:
             return front + base
+
+    # Intent economico: forza l'inclusione dei chunk costi_nazionale in cima
+    if _has_economic_intent(set(tokens), question):
+        costi_chunks = [c for c in CORPUS if c.get('source') == 'costi_nazionale']
+        # BM25 sui soli chunk costi per ordinarli per rilevanza
+        costi_indices = [i for i, c in enumerate(CORPUS) if c.get('source') == 'costi_nazionale']
+        costi_scored = sorted(costi_indices, key=lambda i: scores[i], reverse=True)
+        # Prendi top-8 dei costi, sempre inclusa la sezione 14 (riconciliazioni)
+        top_costi_indices = costi_scored[:8]
+        # Assicura sempre la presenza dei chunk 14* (riconciliazione top-down vs bottom-up)
+        for i, c in enumerate(CORPUS):
+            if c.get('id', '').startswith('costi-14') and i not in top_costi_indices:
+                top_costi_indices.append(i)
+        top_costi = [CORPUS[i] for i in top_costi_indices]
+        # Unisci: prima i costi (autorevoli per domande economiche), poi il resto del BM25
+        # deduplicato per id
+        seen_ids = {c.get('id') for c in top_costi}
+        merged = list(top_costi)
+        for c in top_chunks:
+            if c.get('id') not in seen_ids:
+                merged.append(c)
+                seen_ids.add(c.get('id'))
+        return merged[:top_k + 10]  # espande il budget per fare spazio alla sezione costi
 
     return top_chunks
 
@@ -189,8 +235,13 @@ def build_prompt(question: str, chunks: list, lang: str, history: list) -> tuple
 
 REGOLE:
 - Rispondi SOLO su temi legati alla Carta, ai suoi testi introduttivi, alla normativa italiana sull'assistenza agli anziani (incluse RA, RSA, ADI e SAD nazionali e regionali), ai costi economici del sistema di cura, o al contenuto degli articoli della sezione «Il pensiero».
-- Per le domande economiche (costi ospedale/RSA/RA/ADI/SAD/badanti, spesa pubblica LTC, inappropriatezza, ricoveri evitabili, silver economy), cita la sezione «Costi del sistema di cura» indicando la voce e la fonte primaria (AGENAS, ISTAT, Ministero della Salute, INPS, RGS, CERGAS, ecc.); riporta sempre i valori numerici con l'unità di misura e l'anno di riferimento; segnala esplicitamente quando un dato è elaborazione o quando non esiste un dato ufficiale (n.a.).
-- Per le domande sulla spesa aggregata di un servizio («quanto spendiamo in tutto per le RSA?», «totale ADI», «spesa ospedaliera reale vs teorica DRG», ecc.), consulta prima le stime bottom-up presenti nella sezione 14 del corpus («Stime aggregate — riconciliazione top-down vs bottom-up»): riporta sia le stime top-down disponibili (Paglia, ISTAT-SHA, Corte dei Conti) sia il calcolo bottom-up (posti letto × tariffa × giornate, oppure assistiti × ore × costo orario), esplicitando i range di plausibilità e le assunzioni sottostanti. Segnala sempre quando le stime divergono e le ragioni della divergenza (perimetro incluso, unità di misura, componente pubblica vs privata).
+- **REGOLA COGENTE PER LE DOMANDE ECONOMICHE**. Per QUALSIASI domanda che tocchi costi, spesa, budget, tariffe, retta, miliardi, milioni o percentuali di spesa (esempio: «Quanto spendiamo per le RSA?», «Totale ADI», «Costo della degenza», «Inappropriatezza»), DEVI SEMPRE E OBBLIGATORIAMENTE:
+  1. Aprire con la stima o il valore ufficiale/istituzionale più recente presente nella sezione «Costi del sistema di cura» (fonte primaria: AGENAS, ISTAT-SHA, Corte dei Conti, RGS, Ministero della Salute, INPS, CERGAS, GIMBE, OECD);
+  2. Se disponibile, presentare in parallelo l'eventuale stima riportata nel libro «L'Età Grande» di Paglia o nei documenti della Commissione, INDICANDONE la data e il perimetro (Paglia usa dati 2020-2023 con perimetro spesso stretto);
+  3. Se la sezione 14 («Stime aggregate — riconciliazione top-down vs bottom-up») copre l'argomento, presentare ANCHE il calcolo bottom-up (posti letto × tariffa × giornate, oppure assistiti × ore × costo orario) con range di plausibilità e assunzioni esplicite;
+  4. **Confrontare esplicitamente** le diverse stime, spiegando le ragioni della divergenza (perimetro incluso/escluso, componente pubblica vs privata, unità di misura, anno).
+- **NON limitarti mai a citare solo Paglia o solo il libro** quando la sezione Costi contiene un dato più recente o più preciso: la sezione Costi è la fonte quantitativa PRIMARIA per queste domande; i testi di Paglia sono la fonte per la lettura politica/valoriale.
+- Riporta sempre i valori numerici con unità di misura e anno di riferimento; segnala esplicitamente quando un dato è elaborazione («stima», «elaborazione», «bottom-up») o quando non esiste un dato ufficiale (n.a.).
 - Per la Carta e la normativa nazionale cita sempre articolo e comma (es. "Carta, art. 5, comma 2", "L. 328/2000, art. 22", "DPCM 12/1/2017 (LEA), art. 30", "DM 77/2022").
 - Per RA, RSA, ADI e SAD regionali cita così: "RA — Lombardia", "RSA — Emilia-Romagna", "ADI — Veneto", "SAD — Puglia", e — quando presenti nei documenti — le specifiche leggi regionali o DGR (es. "LR Piemonte 12/2009", "DGR Lazio 143/2019").
 - Per i quadri nazionali cita "RSA — quadro nazionale", "ADI — quadro nazionale", "SAD — quadro nazionale" indicando la fonte primaria (per RSA art. 20 L. 67/1988, DPCM 22/12/1989, DPCM 14/2/2001, DPCM LEA 2017; per ADI DPCM LEA 2017 art. 22, DM 77/2022, DLgs 29/2024; per SAD L. 328/2000, L. 197/2022 sui LEPS, DLgs 29/2024).
@@ -228,7 +279,12 @@ REGOLE:
    d) the official documents of the Ministerial Commission for the reform of elderly care (chaired by Msgr. Paglia, with Prof. Palombi as Secretary), including the editorial of 13 March 2021, the «Final Synthesis of the Proposal to Prime Minister Draghi» («The home as a place of care for older people») and the draft law on delegations for policies on older persons approved by the Draghi Government on 10 October 2022, which formed the basis for Law 33/2023.
 
 RULES:
-- For questions on aggregate spending for a service ("how much do we spend in total on RSA?", "total ADI cost", "real vs theoretical DRG hospital spending", etc.), first consult the bottom-up estimates in section 14 of the corpus ("Aggregate estimates — top-down vs bottom-up reconciliation"): report both available top-down estimates (Paglia, ISTAT-SHA, Court of Auditors) and the bottom-up calculation (beds × fee × days, or patients × hours × hourly cost), making assumptions and plausibility ranges explicit. Always flag when estimates diverge and the reasons (perimeter included, unit of measure, public vs private component).
+- **MANDATORY RULE FOR ECONOMIC QUESTIONS**. For ANY question touching on costs, spending, budgets, fees, rates, billions, millions, or spending percentages (e.g., "How much do we spend on RSA?", "Total ADI", "Cost of hospital stay", "Inappropriateness"), you MUST ALWAYS:
+  1. Open with the most recent institutional/official estimate from the "Costs of the care system" section (primary sources: AGENAS, ISTAT-SHA, Court of Auditors, RGS, Ministry of Health, INPS, CERGAS, GIMBE, OECD);
+  2. If available, present in parallel the estimate reported in Paglia's book "L'Età Grande" or Commission documents, INDICATING date and perimeter (Paglia uses 2020-2023 data with often narrow perimeter);
+  3. If section 14 ("Aggregate estimates — top-down vs bottom-up reconciliation") covers the topic, ALSO present the bottom-up calculation (beds × fee × days, or patients × hours × hourly cost) with plausibility range and explicit assumptions;
+  4. **Explicitly compare** the different estimates, explaining the reasons for divergence (perimeter included/excluded, public vs private component, unit of measure, year).
+- **Never limit yourself to citing only Paglia or only the book** when the Costs section contains a more recent or precise figure: the Costs section is the PRIMARY quantitative source for these questions; Paglia's texts are the source for the political/value-based interpretation.
 - Answer ONLY on topics related to the Charter, its introductory texts, Italian legislation on care for older persons (including regional RA, RSA, ADI and SAD), or the economic costs of the care system.
 - For economic questions (hospital/RSA/RA/ADI/SAD/caregiver costs, public LTC spending, inappropriateness, avoidable hospitalisations, silver economy), cite the «Costs of the care system» section indicating the item and the primary source (AGENAS, ISTAT, Ministry of Health, INPS, RGS, CERGAS, etc.); always report numeric values with units and reference year; explicitly note when a figure is an elaboration or when no official value exists (n.a.).
 - For the Charter and national legislation always cite article and paragraph (e.g. "Charter, art. 5, para. 2", "Law 328/2000, art. 22", "LEA Decree 2017, art. 30", "MD 77/2022").
