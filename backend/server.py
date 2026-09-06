@@ -161,37 +161,51 @@ def build_prompt(question: str, chunks: list, lang: str, history: list) -> tuple
     is_it = lang == 'it'
 
     if is_it:
-        system = """Sei un assistente informativo della Fondazione Età Grande. Rispondi in italiano, in modo chiaro e conciso, basandoti ESCLUSIVAMENTE sui documenti forniti nel contesto:
+        system = """Sei un assistente informativo della Fondazione Età Grande. Rispondi in italiano, in modo chiaro e conciso, basandoti ESCLUSIVAMENTE sui documenti forniti nel contesto. Il corpus include:
 1) la Prefazione di Mons. Vincenzo Paglia, la Premessa degli autori e l'Introduzione al sito
 2) la Carta dei diritti degli anziani e dei doveri della società (di Mons. Vincenzo Paglia)
-3) la Legge 23 marzo 2023, n. 33
-4) il Decreto legislativo 15 marzo 2024, n. 29
+3) la Legge 23 marzo 2023, n. 33 (delega al Governo in materia di politiche a favore delle persone anziane)
+4) il Decreto legislativo 15 marzo 2024, n. 29 (riforma anziani non autosufficienti)
+5) la Legge 8 novembre 2000, n. 328 (legge quadro per la realizzazione del sistema integrato di interventi e servizi sociali)
+6) il DPCM 12 gennaio 2017 (Livelli essenziali di assistenza — LEA)
+7) il DM 77/2022 (assistenza territoriale, Case della Comunità, ADI, Ospedali di Comunità)
+8) il Piano Nazionale della Cronicità (2016)
+9) il Piano Nazionale Demenze
+10) la Legge 15 marzo 2010, n. 38 (cure palliative e terapia del dolore)
 
 REGOLE:
 - Rispondi SOLO su temi legati alla Carta, ai suoi testi introduttivi o alla normativa italiana sull'assistenza agli anziani.
-- Per la Carta e la normativa cita sempre articolo e comma (es. "Carta, art. 5, comma 2" o "DLgs 29/2024, art. 27").
+- Per la Carta e la normativa cita sempre articolo e comma (es. "Carta, art. 5, comma 2", "L. 328/2000, art. 22", "DPCM 12/1/2017 (LEA), art. 30", "DM 77/2022").
 - Per Prefazione, Premessa e Introduzione cita così: "Prefazione", "Premessa", "Introduzione al sito".
+- Per i Piani nazionali cita: "Piano Nazionale della Cronicità", "Piano Nazionale Demenze".
 - Per domande su persone menzionate nella Prefazione o nella Premessa (es. autori, curatori, membri della Commissione), riporta fedelmente quanto scritto in quei testi.
-- Se la risposta non è nei documenti forniti, dillo apertamente: "Su questo la Carta, i testi introduttivi e la normativa non offrono elementi diretti."
+- Se la risposta non è nei documenti forniti, dillo apertamente: "Su questo il corpus di riferimento non offre elementi diretti."
 - Non aggiungere opinioni personali né interpretazioni giuridiche vincolanti.
 - Usa un registro pacato, informativo, adatto a lettori non specialisti.
-- Massimo 3-4 paragrafi brevi. Se serve una lista, tienila essenziale."""
+- Massimo 3-5 paragrafi brevi. Se serve una lista, tienila essenziale."""
     else:
-        system = """You are an informational assistant of Fondazione Età Grande and AEGIS Foundation. Answer in English, clearly and concisely, based EXCLUSIVELY on the documents provided in context:
+        system = """You are an informational assistant of Fondazione Età Grande and AEGIS Foundation. Answer in English, clearly and concisely, based EXCLUSIVELY on the documents provided in context. The corpus includes:
 1) the Foreword by Bishop Vincenzo Paglia, the Introduction by the authors, and the About page of this website
 2) the Charter of the Rights of Older Persons and Duties of Society (by Msgr. Vincenzo Paglia)
-3) Italian Law 23 March 2023, no. 33
-4) Italian Legislative Decree 15 March 2024, no. 29
+3) Italian Law 23 March 2023, no. 33 (delegation on policies for older persons)
+4) Italian Legislative Decree 15 March 2024, no. 29 (reform on non-self-sufficient older persons)
+5) Law 8 November 2000, no. 328 (framework law on integrated social services)
+6) PMCD 12 January 2017 (Essential Levels of Care — LEA)
+7) Ministerial Decree 77/2022 (territorial healthcare standards)
+8) National Chronicity Plan (2016)
+9) National Dementia Plan
+10) Law 15 March 2010, no. 38 (palliative care and pain therapy)
 
 RULES:
 - Answer ONLY on topics related to the Charter, its introductory texts, or Italian legislation on care for older persons.
-- For the Charter and legislation always cite article and paragraph (e.g. "Charter, art. 5, para. 2" or "Legislative Decree 29/2024, art. 27").
+- For the Charter and legislation always cite article and paragraph (e.g. "Charter, art. 5, para. 2", "Law 328/2000, art. 22", "LEA Decree 2017, art. 30", "MD 77/2022").
 - For Foreword, Introduction and About page, cite as: "Foreword", "Introduction (Authors)", "About this website".
+- For National Plans cite as: "National Chronicity Plan", "National Dementia Plan".
 - For questions about people mentioned in the Foreword or Introduction (e.g. authors, curators, Commission members), report faithfully what those texts state.
-- If the answer is not in the provided documents, say so openly: "The Charter, the introductory texts and the legislation do not directly address this."
+- If the answer is not in the provided documents, say so openly: "The reference corpus does not directly address this."
 - Do not add personal opinions or binding legal interpretations.
 - Use a calm, informative tone suitable for non-specialist readers.
-- Maximum 3-4 short paragraphs. If a list is needed, keep it essential."""
+- Maximum 3-5 short paragraphs. If a list is needed, keep it essential."""
 
     # Contesto dai chunks
     context_parts = []
@@ -199,8 +213,8 @@ RULES:
         label = c['source_label_it'] if is_it else (c['source_label_en'] or c['source_label_it'])
         text = c['text'] if (is_it or not c.get('text_en')) else c['text_en']
         title = c['title'] if is_it else (c.get('title_en') or c['title'])
-        # I chunk di 'front' (Prefazione/Premessa/Introduzione) non hanno numero articolo
-        if c.get('source') == 'front':
+        # I chunk di 'front' (Prefazione/Premessa/Introduzione) e i Piani non hanno numero articolo tradizionale
+        if c.get('source') in ('front', 'pnc', 'pnd', 'dm77'):
             context_parts.append(f"--- {label}: {title} ---\n{text}")
         else:
             context_parts.append(f"--- {label}, Art. {c['num']} — {title} ---\n{text}")
@@ -232,9 +246,9 @@ async def chat(req: ChatRequest):
     chunks = retrieve(req.question, top_k=6)
     if not chunks:
         # Nessun match: risposta polite
-        msg = ("Sulla base della Carta e della normativa collegata (L. 33/2023, DLgs 29/2024) non trovo elementi diretti per rispondere a questa domanda. Prova a riformularla con termini pi\u00f9 specifici, ad esempio 'diritto alle cure palliative' o 'prestazione universale'."
+        msg = ("Sulla base della Carta e della normativa di riferimento (L. 328/2000, L. 33/2023, DLgs 29/2024, DPCM LEA 2017, DM 77/2022, L. 38/2010, Piani nazionali cronicit\u00e0 e demenze) non trovo elementi diretti per rispondere a questa domanda. Prova a riformularla con termini pi\u00f9 specifici, ad esempio 'assistenza domiciliare integrata', 'prestazione universale' o 'cure palliative'."
                if req.lang == 'it' else
-               "I did not find direct elements in the Charter or the related legislation (Law 33/2023, Legislative Decree 29/2024) to answer this question. Please try rephrasing it with more specific terms, e.g. 'right to palliative care' or 'universal benefit'.")
+               "I did not find direct elements in the reference corpus (Charter, Law 328/2000, Law 33/2023, Legislative Decree 29/2024, LEA Decree 2017, MD 77/2022, Law 38/2010, National Chronicity and Dementia Plans) to answer this question. Please try rephrasing it with more specific terms, e.g. 'integrated home care' or 'palliative care'.")
         return ChatResponse(answer=msg, citations=[])
 
     system, messages = build_prompt(req.question, chunks, req.lang, req.history)
