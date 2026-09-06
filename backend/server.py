@@ -172,10 +172,13 @@ def build_prompt(question: str, chunks: list, lang: str, history: list) -> tuple
 8) il Piano Nazionale della Cronicità (2016)
 9) il Piano Nazionale Demenze
 10) la Legge 15 marzo 2010, n. 38 (cure palliative e terapia del dolore)
+11) la ricognizione della normativa istitutiva e regolatoria delle Residenze Assistenziali (RA) e delle Residenze Sanitarie Assistenziali (RSA) — quadro nazionale e schede per ciascuna regione italiana e per le Province autonome di Trento e Bolzano
 
 REGOLE:
-- Rispondi SOLO su temi legati alla Carta, ai suoi testi introduttivi o alla normativa italiana sull'assistenza agli anziani.
-- Per la Carta e la normativa cita sempre articolo e comma (es. "Carta, art. 5, comma 2", "L. 328/2000, art. 22", "DPCM 12/1/2017 (LEA), art. 30", "DM 77/2022").
+- Rispondi SOLO su temi legati alla Carta, ai suoi testi introduttivi o alla normativa italiana sull'assistenza agli anziani (incluse RA e RSA regionali).
+- Per la Carta e la normativa nazionale cita sempre articolo e comma (es. "Carta, art. 5, comma 2", "L. 328/2000, art. 22", "DPCM 12/1/2017 (LEA), art. 30", "DM 77/2022").
+- Per RA e RSA regionali cita così: "RA — Lombardia", "RSA — Emilia-Romagna", e — quando presenti nei documenti — le specifiche leggi regionali o DGR (es. "LR Piemonte 12/2009", "DGR Lazio 143/2019").
+- Per il quadro nazionale RSA (istitutivo) cita "RSA — quadro nazionale" indicando la fonte primaria (art. 20 L. 67/1988, DPCM 22/12/1989, DPCM 14/2/2001, DPCM LEA 2017).
 - Per Prefazione, Premessa e Introduzione cita così: "Prefazione", "Premessa", "Introduzione al sito".
 - Per i Piani nazionali cita: "Piano Nazionale della Cronicità", "Piano Nazionale Demenze".
 - Per domande su persone menzionate nella Prefazione o nella Premessa (es. autori, curatori, membri della Commissione), riporta fedelmente quanto scritto in quei testi.
@@ -195,10 +198,13 @@ REGOLE:
 8) National Chronicity Plan (2016)
 9) National Dementia Plan
 10) Law 15 March 2010, no. 38 (palliative care and pain therapy)
+11) survey of the founding and regulatory legislation on Assisted-Living Residences (RA) and Nursing Homes (RSA) — national framework and profiles for each Italian region and for the Autonomous Provinces of Trento and Bolzano
 
 RULES:
-- Answer ONLY on topics related to the Charter, its introductory texts, or Italian legislation on care for older persons.
-- For the Charter and legislation always cite article and paragraph (e.g. "Charter, art. 5, para. 2", "Law 328/2000, art. 22", "LEA Decree 2017, art. 30", "MD 77/2022").
+- Answer ONLY on topics related to the Charter, its introductory texts, or Italian legislation on care for older persons (including regional RA and RSA).
+- For the Charter and national legislation always cite article and paragraph (e.g. "Charter, art. 5, para. 2", "Law 328/2000, art. 22", "LEA Decree 2017, art. 30", "MD 77/2022").
+- For regional RA and RSA cite as: "RA — Lombardia", "RSA — Emilia-Romagna", and — when present in the documents — the specific regional laws or resolutions.
+- For the national framework on RSA cite "RSA — national framework" indicating the primary source (art. 20 Law 67/1988, PMCD 22/12/1989, PMCD 14/2/2001, LEA Decree 2017).
 - For Foreword, Introduction and About page, cite as: "Foreword", "Introduction (Authors)", "About this website".
 - For National Plans cite as: "National Chronicity Plan", "National Dementia Plan".
 - For questions about people mentioned in the Foreword or Introduction (e.g. authors, curators, Commission members), report faithfully what those texts state.
@@ -214,7 +220,7 @@ RULES:
         text = c['text'] if (is_it or not c.get('text_en')) else c['text_en']
         title = c['title'] if is_it else (c.get('title_en') or c['title'])
         # I chunk di 'front' (Prefazione/Premessa/Introduzione) e i Piani non hanno numero articolo tradizionale
-        if c.get('source') in ('front', 'pnc', 'pnd', 'dm77'):
+        if c.get('source') in ('front', 'pnc', 'pnd', 'dm77', 'ra_reg', 'rsa_reg', 'rsa_naz'):
             context_parts.append(f"--- {label}: {title} ---\n{text}")
         else:
             context_parts.append(f"--- {label}, Art. {c['num']} — {title} ---\n{text}")
