@@ -216,7 +216,7 @@ REGOLE:
 11) survey of the founding and regulatory legislation on Assisted-Living Residences (RA) and Nursing Homes (RSA) — national framework and profiles for each Italian region and for the Autonomous Provinces of Trento and Bolzano
 12) the «Il pensiero» section, organised in four sub-areas:
    a) articles, interviews and editorials by Msgr. Vincenzo Paglia on older persons;
-   b) scientific research on ageing (62 verified publications, 1990-2026) by the group of Leonardo Palombi and Giuseppe Liotta (Department of Biomedicine and Prevention, University of Rome Tor Vergata) and collaborators, covering frailty, mortality, multidimensional geriatric assessment, RSA/ADI, community screening;
+   b) scientific research on ageing (62 verified publications, 1990-2026) by the group of Leonardo Palombi, Giuseppe Liotta and Stefano Orlando (Department of Biomedicine and Prevention, University of Rome Tor Vergata) and collaborators, covering frailty, mortality, multidimensional geriatric assessment, RSA/ADI, community screening;
    c) contributions from the Community of Sant'Egidio;
    d) the official documents of the Ministerial Commission for the reform of elderly care (chaired by Msgr. Paglia, with Prof. Palombi as Secretary), including the editorial of 13 March 2021, the «Final Synthesis of the Proposal to Prime Minister Draghi» («The home as a place of care for older people») and the draft law on delegations for policies on older persons approved by the Draghi Government on 10 October 2022, which formed the basis for Law 33/2023.
 
