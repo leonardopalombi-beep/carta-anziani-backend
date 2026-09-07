@@ -21,7 +21,17 @@ from anthropic import Anthropic
 
 # --- Setup ---
 HERE = pathlib.Path(__file__).parent
-CORPUS = json.loads((HERE / 'corpus.json').read_text())
+_CORPUS_PATH = HERE / 'corpus.json'
+CORPUS = json.loads(_CORPUS_PATH.read_text())
+print(f'[boot] Loaded corpus from {_CORPUS_PATH.resolve()} — {len(CORPUS)} chunks')
+try:
+    _sources = {}
+    for _c in CORPUS:
+        _s = _c.get('source', '?')
+        _sources[_s] = _sources.get(_s, 0) + 1
+    print(f'[boot] Corpus sources: {dict(sorted(_sources.items(), key=lambda x: -x[1]))}')
+except Exception as _e:
+    print(f'[boot] Could not summarize corpus: {_e}')
 
 # Prepara BM25 tokenizzato per italiano (e inglese quando disponibile)
 def tokenize(text: str) -> list:
@@ -122,6 +132,7 @@ class Citation(BaseModel):
     area: Optional[str] = None
     ricerca_id: Optional[str] = None
     capitolo_id: Optional[str] = None
+    excerpt: Optional[str] = None  # estratto ~300 char per export
 
 
 class ChatResponse(BaseModel):
@@ -131,17 +142,40 @@ class ChatResponse(BaseModel):
 
 GENERIC_KEYWORDS = {'sintesi', 'riassunto', 'pensiero', 'filosofia', 'visione', 'novita', 'novità', 'panoramica', 'introduzione', 'overview', 'summary', 'philosophy', 'principi', 'cultura', 'spiegami', 'raccontami', 'presenta', 'presentami', 'illustra'}
 
+# Keyword economiche/quantitative: se presenti, includiamo FORZATAMENTE i chunk costi_nazionale
+# per evitare che il ranker BM25 favorisca solo Paglia/libro/pensiero
+ECONOMIC_KEYWORDS = {
+    'costo', 'costi', 'spesa', 'spese', 'spendiamo', 'spende', 'spendere',
+    'miliardi', 'miliardo', 'milioni', 'mln', 'mld', 'euro', 'eur',
+    'quanto', 'quanta', 'quanti', 'quante',
+    'budget', 'bilancio', 'finanziamento', 'finanziamenti', 'risorse',
+    'tariffa', 'tariffe', 'retta', 'rette', 'quota', 'quote',
+    'inappropriatezza', 'inappropriati', 'oltresoglia', 'oltre-soglia',
+    'drg', 'agenas', 'istat', 'sha', 'ocse', 'oecd', 'gimbe', 'cergas',
+    'silver', 'pil', 'gdp',
+    'cost', 'costs', 'spend', 'spending', 'billion', 'billions', 'million', 'millions',
+    'how much', 'budget', 'funding', 'resources', 'tariff', 'fee', 'fees',
+}
+
+def _has_economic_intent(tokens_set: set, raw_question: str) -> bool:
+    """True se la domanda è economica/quantitativa e va servita col contesto Costi."""
+    if tokens_set & ECONOMIC_KEYWORDS:
+        return True
+    q = raw_question.lower()
+    if 'how much' in q or 'quanto costa' in q or 'quanto spend' in q:
+        return True
+    return False
+
 def retrieve(question: str, top_k: int = 6) -> list:
     """BM25 retrieval — restituisce i top-K chunks più rilevanti.
 
     Per domande generali/di sintesi, ricadiamo su TUTTI i 18 articoli della Carta.
+    Per domande economiche, forziamo l'inclusione dei chunk della sezione Costi.
     """
     tokens = tokenize(question)
     if not tokens:
         return []
 
-    # Domanda generica? → usa tutta la Carta come contesto
-    # Prima calcolo sempre BM25
     scores = BM25.get_scores(tokens)
     top_idx = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
     top_chunks = [CORPUS[i] for i in top_idx if scores[i] > 0]
@@ -156,6 +190,29 @@ def retrieve(question: str, top_k: int = 6) -> list:
         front = [c for c in CORPUS if c.get('source') == 'front' and c.get('kind') in ('introduction', 'preface')]
         if base:
             return front + base
+
+    # Intent economico: forza l'inclusione dei chunk costi_nazionale in cima
+    if _has_economic_intent(set(tokens), question):
+        costi_chunks = [c for c in CORPUS if c.get('source') == 'costi_nazionale']
+        # BM25 sui soli chunk costi per ordinarli per rilevanza
+        costi_indices = [i for i, c in enumerate(CORPUS) if c.get('source') == 'costi_nazionale']
+        costi_scored = sorted(costi_indices, key=lambda i: scores[i], reverse=True)
+        # Prendi top-8 dei costi, sempre inclusa la sezione 14 (riconciliazioni)
+        top_costi_indices = costi_scored[:8]
+        # Assicura sempre la presenza dei chunk 14* (riconciliazione top-down vs bottom-up)
+        for i, c in enumerate(CORPUS):
+            if c.get('id', '').startswith('costi-14') and i not in top_costi_indices:
+                top_costi_indices.append(i)
+        top_costi = [CORPUS[i] for i in top_costi_indices]
+        # Unisci: prima i costi (autorevoli per domande economiche), poi il resto del BM25
+        # deduplicato per id
+        seen_ids = {c.get('id') for c in top_costi}
+        merged = list(top_costi)
+        for c in top_chunks:
+            if c.get('id') not in seen_ids:
+                merged.append(c)
+                seen_ids.add(c.get('id'))
+        return merged[:top_k + 10]  # espande il budget per fare spazio alla sezione costi
 
     return top_chunks
 
@@ -177,18 +234,28 @@ def build_prompt(question: str, chunks: list, lang: str, history: list) -> tuple
 9) il Piano Nazionale Demenze
 10) la Legge 15 marzo 2010, n. 38 (cure palliative e terapia del dolore)
 11) la ricognizione della normativa istitutiva e regolatoria delle Residenze Assistenziali (RA) e delle Residenze Sanitarie Assistenziali (RSA) — quadro nazionale e schede per ciascuna regione italiana e per le Province autonome di Trento e Bolzano
-12) la sezione «Il pensiero», organizzata in quattro sotto-aree:
+12) la ricognizione dell'Assistenza Domiciliare Integrata (ADI) e del Servizio di Assistenza Domiciliare (SAD) — quadro nazionale (DM 77/2022, DLgs 29/2024, LEPS, standard 10% over-65 in ADI) e schede per ciascuna regione italiana e per le Province autonome di Trento e Bolzano
+13) la sezione «Costi del sistema di cura» — quadro nazionale in 14 sezioni (la 14a contiene stime aggregate con riconciliazione bottom-up per RSA, ospedale reale vs teorica DRG, ADI con convergenza Corte dei Conti, SAD, RA): costo giornata di degenza ospedaliera (AGENAS 2025: 374-1.326 €/gg pesati per DRG); RSA e strutture residenziali (ISTAT 12.987 presidi, 425.780 posti letto); costi RSA e RA per la famiglia (Altroconsumo 2025: retta media 2.139 €/mese, ~70 €/gg; DPCM 2001 riparto 50/50 SSN/utente); ADI (costo standard PNRR 1.977,94 €/anno, ~5,4 €/gg; copertura 11,3% over-65); SAD comunale (~3.600 €/anno/utente, 0,9% over-65); badanti (1.685-1.761 €/mese CCNL 2025-2026); indennità di accompagnamento (551,53 €/mese 2026; spesa 15,3 mld € = 0,70% PIL); Prestazione Universale (1.392 €/mese, sperimentazione 2025-2026); LTC pubblica totale 35,3 mld € (1,61% PIL) con 50,3% cash, 30,4% institutions, 19,3% at home; ricoveri ospedalieri potenzialmente inappropriati ACSC (AGENAS PNE 2024: scompenso ~130.000, BPCO 74.378, diabete 15.938); accessi impropri in PS (~22% ~3,9-4 mln; over-80 sono 27% degli accessi); istituzionalizzazione precoce evitabile (Cochrane 2024: RR 0,53 con hospital-at-home); cronicità mal gestita (Piano Nazionale Cronicità 2025: scompenso ~1.500 €/anno, BPCO 3.469 €/anno di cui 80% da riacutizzazioni); confronto sintetico per setting (RSA vs ADI vs badanti vs SAD); silver economy (over-65 generano 20-30% PIL, ~500 mld €). Fonti: AGENAS, ISTAT, Ministero della Salute, INPS, RGS, CERGAS Bocconi, GIMBE, DOMINA, Assindatcolf, Italia Longeva, OECD Health at a Glance 2025, Cochrane, GRHTA.
+14) la sezione «Il pensiero», organizzata in quattro sotto-aree:
    a) articoli, interviste ed editoriali di Mons. Vincenzo Paglia sugli anziani;
-   b) ricerche scientifiche sul tema dell'invecchiamento (62 pubblicazioni verificate, 1990-2026) del gruppo di Leonardo Palombi e Giuseppe Liotta (Dipartimento di Biomedicina e Prevenzione, Università di Roma Tor Vergata) e collaboratori, sui temi di fragilità, mortalità, valutazione geriatrica multidimensionale, RSA/ADI, screening territoriale;
+   b) ricerche scientifiche sul tema dell'invecchiamento (62 pubblicazioni verificate, 1990-2026) del gruppo di Leonardo Palombi, Giuseppe Liotta e Stefano Orlando (Dipartimento di Biomedicina e Prevenzione, Università di Roma Tor Vergata) e collaboratori, sui temi di fragilità, mortalità, valutazione geriatrica multidimensionale, RSA/ADI, screening territoriale;
    — inclusa nella sotto-area «articoli e interventi di Mons. Paglia» l'opera monografica «L'Età Grande: la nuova legge per gli anziani» (Edizioni LSWR 2024), volume in 7 capitoli che analizza la Legge 33/2023 e il decreto legislativo 29/2024 con la Carta dei diritti come orizzonte ideale, le aree di intervento, la visione, gli obiettivi politici e la sperimentazione del Progetto Anchise nella Regione Lazio;
    c) contributi della Comunità di Sant'Egidio;
    d) i documenti ufficiali della Commissione ministeriale per la riforma dell'assistenza agli anziani (presieduta da Mons. Paglia con il Prof. Palombi come Segretario), tra cui l'editoriale del 13 marzo 2021, la «Sintesi finale della proposta al Presidente Draghi» («L'abitazione come luogo di cura per gli anziani») e il DDL sulle deleghe in materia di politiche per gli anziani approvato dal Governo Draghi il 10 ottobre 2022, base della successiva Legge 33/2023.
 
 REGOLE:
-- Rispondi SOLO su temi legati alla Carta, ai suoi testi introduttivi, alla normativa italiana sull'assistenza agli anziani (incluse RA e RSA regionali) o al contenuto degli articoli della sezione «Il pensiero».
+- Rispondi SOLO su temi legati alla Carta, ai suoi testi introduttivi, alla normativa italiana sull'assistenza agli anziani (incluse RA, RSA, ADI e SAD nazionali e regionali), ai costi economici del sistema di cura, o al contenuto degli articoli della sezione «Il pensiero».
+- **REGOLA COGENTE PER LE DOMANDE ECONOMICHE**. Per QUALSIASI domanda che tocchi costi, spesa, budget, tariffe, retta, miliardi, milioni o percentuali di spesa (esempio: «Quanto spendiamo per le RSA?», «Totale ADI», «Costo della degenza», «Inappropriatezza»), DEVI SEMPRE E OBBLIGATORIAMENTE:
+  1. Aprire con la stima o il valore ufficiale/istituzionale più recente presente nella sezione «Costi del sistema di cura» (fonte primaria: AGENAS, ISTAT-SHA, Corte dei Conti, RGS, Ministero della Salute, INPS, CERGAS, GIMBE, OECD);
+  2. Se disponibile, presentare in parallelo l'eventuale stima riportata nel libro «L'Età Grande» di Paglia o nei documenti della Commissione, INDICANDONE la data e il perimetro (Paglia usa dati 2020-2023 con perimetro spesso stretto);
+  3. Se la sezione 14 («Stime aggregate — riconciliazione top-down vs bottom-up») copre l'argomento, presentare ANCHE il calcolo bottom-up (posti letto × tariffa × giornate, oppure assistiti × ore × costo orario) con range di plausibilità e assunzioni esplicite;
+  4. **Confrontare esplicitamente** le diverse stime, spiegando le ragioni della divergenza (perimetro incluso/escluso, componente pubblica vs privata, unità di misura, anno).
+- **NON limitarti mai a citare solo Paglia o solo il libro** quando la sezione Costi contiene un dato più recente o più preciso: la sezione Costi è la fonte quantitativa PRIMARIA per queste domande; i testi di Paglia sono la fonte per la lettura politica/valoriale.
+- Riporta sempre i valori numerici con unità di misura e anno di riferimento; segnala esplicitamente quando un dato è elaborazione («stima», «elaborazione», «bottom-up») o quando non esiste un dato ufficiale (n.a.).
 - Per la Carta e la normativa nazionale cita sempre articolo e comma (es. "Carta, art. 5, comma 2", "L. 328/2000, art. 22", "DPCM 12/1/2017 (LEA), art. 30", "DM 77/2022").
-- Per RA e RSA regionali cita così: "RA — Lombardia", "RSA — Emilia-Romagna", e — quando presenti nei documenti — le specifiche leggi regionali o DGR (es. "LR Piemonte 12/2009", "DGR Lazio 143/2019").
-- Per il quadro nazionale RSA (istitutivo) cita "RSA — quadro nazionale" indicando la fonte primaria (art. 20 L. 67/1988, DPCM 22/12/1989, DPCM 14/2/2001, DPCM LEA 2017).
+- Per RA, RSA, ADI e SAD regionali cita così: "RA — Lombardia", "RSA — Emilia-Romagna", "ADI — Veneto", "SAD — Puglia", e — quando presenti nei documenti — le specifiche leggi regionali o DGR (es. "LR Piemonte 12/2009", "DGR Lazio 143/2019").
+- Per i quadri nazionali cita "RSA — quadro nazionale", "ADI — quadro nazionale", "SAD — quadro nazionale" indicando la fonte primaria (per RSA art. 20 L. 67/1988, DPCM 22/12/1989, DPCM 14/2/2001, DPCM LEA 2017; per ADI DPCM LEA 2017 art. 22, DM 77/2022, DLgs 29/2024; per SAD L. 328/2000, L. 197/2022 sui LEPS, DLgs 29/2024).
+
 - Per Prefazione, Premessa e Introduzione cita così: "Prefazione", "Premessa", "Introduzione al sito".
 - Per i Piani nazionali cita: "Piano Nazionale della Cronicità", "Piano Nazionale Demenze".
 - Per gli articoli della sezione «Il pensiero» cita così: «Il pensiero — [autore], “[titolo]”», indicando la testata quando disponibile (es. «Il pensiero — Vincenzo Paglia, “La cura che cambia: il Piemonte sceglie il territorio”»).
@@ -213,17 +280,26 @@ REGOLE:
 9) National Dementia Plan
 10) Law 15 March 2010, no. 38 (palliative care and pain therapy)
 11) survey of the founding and regulatory legislation on Assisted-Living Residences (RA) and Nursing Homes (RSA) — national framework and profiles for each Italian region and for the Autonomous Provinces of Trento and Bolzano
-12) the «Il pensiero» section, organised in four sub-areas:
+12) survey of Integrated Home Care (ADI) and Municipal Home Care Service (SAD) — national framework (Ministerial Decree 77/2022, Legislative Decree 29/2024, LEPS, 10% over-65 ADI target) and profiles for each Italian region and for the Autonomous Provinces of Trento and Bolzano
+13) the «Costs of the care system» section — national framework in 14 sections (14th being aggregate estimates with bottom-up reconciliation for RSA, hospital real vs theoretical DRG, ADI, SAD, RA): hospital bed-day cost (AGENAS 2025: EUR 374-1,326/day, DRG-weighted); RSA and residential facilities (ISTAT: 12,987 facilities, 425,780 beds); RSA/RA costs for families (Altroconsumo 2025: average fee EUR 2,139/month; PMCD 2001 50/50 NHS/user split); ADI (PNRR unit cost EUR 1,977.94/year; coverage 11.3% over-65); municipal SAD (~EUR 3,600/year per user, 0.9% over-65); live-in caregivers (EUR 1,685-1,761/month CCNL 2025-2026); attendance allowance (EUR 551.53/month in 2026; total EUR 15.3 bn = 0.70% GDP); Universal Benefit (EUR 1,392/month, 2025-2026 pilot); total public LTC EUR 35.3 bn (1.61% GDP), 50.3% cash / 30.4% institutions / 19.3% at home; ambulatory care sensitive hospitalisations (AGENAS PNE 2024: heart failure ~130,000, COPD 74,378, diabetes 15,938); inappropriate ED visits (~22%, ~3.9-4 million; over-80 = 27% of accesses); avoidable early institutionalisation (Cochrane 2024: RR 0.53 with hospital-at-home); poorly-managed chronicity (National Chronicity Plan 2025: heart failure ~EUR 1,500/year, COPD EUR 3,469/year, 80% from exacerbations); care-setting synthesis (RSA vs ADI vs caregiver vs SAD); silver economy (over-65 generate 20-30% of GDP, ~EUR 500 bn). Sources: AGENAS, ISTAT, Ministry of Health, INPS, RGS, CERGAS Bocconi, GIMBE, DOMINA, Italia Longeva, OECD Health at a Glance 2025, Cochrane, GRHTA.
+14) the «Il pensiero» section, organised in four sub-areas:
    a) articles, interviews and editorials by Msgr. Vincenzo Paglia on older persons;
-   b) scientific research on ageing (62 verified publications, 1990-2026) by the group of Leonardo Palombi and Giuseppe Liotta (Department of Biomedicine and Prevention, University of Rome Tor Vergata) and collaborators, covering frailty, mortality, multidimensional geriatric assessment, RSA/ADI, community screening;
+   b) scientific research on ageing (62 verified publications, 1990-2026) by the group of Leonardo Palombi, Giuseppe Liotta and Stefano Orlando (Department of Biomedicine and Prevention, University of Rome Tor Vergata) and collaborators, covering frailty, mortality, multidimensional geriatric assessment, RSA/ADI, community screening;
    c) contributions from the Community of Sant'Egidio;
    d) the official documents of the Ministerial Commission for the reform of elderly care (chaired by Msgr. Paglia, with Prof. Palombi as Secretary), including the editorial of 13 March 2021, the «Final Synthesis of the Proposal to Prime Minister Draghi» («The home as a place of care for older people») and the draft law on delegations for policies on older persons approved by the Draghi Government on 10 October 2022, which formed the basis for Law 33/2023.
 
 RULES:
-- Answer ONLY on topics related to the Charter, its introductory texts, or Italian legislation on care for older persons (including regional RA and RSA).
+- **MANDATORY RULE FOR ECONOMIC QUESTIONS**. For ANY question touching on costs, spending, budgets, fees, rates, billions, millions, or spending percentages (e.g., "How much do we spend on RSA?", "Total ADI", "Cost of hospital stay", "Inappropriateness"), you MUST ALWAYS:
+  1. Open with the most recent institutional/official estimate from the "Costs of the care system" section (primary sources: AGENAS, ISTAT-SHA, Court of Auditors, RGS, Ministry of Health, INPS, CERGAS, GIMBE, OECD);
+  2. If available, present in parallel the estimate reported in Paglia's book "L'Età Grande" or Commission documents, INDICATING date and perimeter (Paglia uses 2020-2023 data with often narrow perimeter);
+  3. If section 14 ("Aggregate estimates — top-down vs bottom-up reconciliation") covers the topic, ALSO present the bottom-up calculation (beds × fee × days, or patients × hours × hourly cost) with plausibility range and explicit assumptions;
+  4. **Explicitly compare** the different estimates, explaining the reasons for divergence (perimeter included/excluded, public vs private component, unit of measure, year).
+- **Never limit yourself to citing only Paglia or only the book** when the Costs section contains a more recent or precise figure: the Costs section is the PRIMARY quantitative source for these questions; Paglia's texts are the source for the political/value-based interpretation.
+- Answer ONLY on topics related to the Charter, its introductory texts, Italian legislation on care for older persons (including regional RA, RSA, ADI and SAD), or the economic costs of the care system.
+- For economic questions (hospital/RSA/RA/ADI/SAD/caregiver costs, public LTC spending, inappropriateness, avoidable hospitalisations, silver economy), cite the «Costs of the care system» section indicating the item and the primary source (AGENAS, ISTAT, Ministry of Health, INPS, RGS, CERGAS, etc.); always report numeric values with units and reference year; explicitly note when a figure is an elaboration or when no official value exists (n.a.).
 - For the Charter and national legislation always cite article and paragraph (e.g. "Charter, art. 5, para. 2", "Law 328/2000, art. 22", "LEA Decree 2017, art. 30", "MD 77/2022").
-- For regional RA and RSA cite as: "RA — Lombardia", "RSA — Emilia-Romagna", and — when present in the documents — the specific regional laws or resolutions.
-- For the national framework on RSA cite "RSA — national framework" indicating the primary source (art. 20 Law 67/1988, PMCD 22/12/1989, PMCD 14/2/2001, LEA Decree 2017).
+- For regional RA, RSA, ADI and SAD cite as: "RA — Lombardia", "RSA — Emilia-Romagna", "ADI — Veneto", "SAD — Puglia", and — when present in the documents — the specific regional laws or resolutions.
+- For national frameworks cite "RSA — national framework", "ADI — national framework", "SAD — national framework" indicating the primary source (for RSA art. 20 Law 67/1988, PMCD 22/12/1989, PMCD 14/2/2001, LEA Decree 2017; for ADI LEA Decree 2017 art. 22, Ministerial Decree 77/2022, Legislative Decree 29/2024; for SAD Law 328/2000, Law 197/2022 on LEPS, Legislative Decree 29/2024).
 - For Foreword, Introduction and About page, cite as: "Foreword", "Introduction (Authors)", "About this website".
 - For National Plans cite as: "National Chronicity Plan", "National Dementia Plan".
 - For questions about people mentioned in the Foreword or Introduction (e.g. authors, curators, Commission members), report faithfully what those texts state.
@@ -239,7 +315,7 @@ RULES:
         text = c['text'] if (is_it or not c.get('text_en')) else c['text_en']
         title = c['title'] if is_it else (c.get('title_en') or c['title'])
         # I chunk di 'front' (Prefazione/Premessa/Introduzione) e i Piani non hanno numero articolo tradizionale
-        if c.get('source') in ('front', 'pnc', 'pnd', 'dm77', 'ra_reg', 'rsa_reg', 'rsa_naz', 'pensiero', 'ricerca', 'libro'):
+        if c.get('source') in ('front', 'pnc', 'pnd', 'dm77', 'ra_reg', 'rsa_reg', 'rsa_naz', 'adi_reg', 'adi_naz', 'sad_reg', 'sad_naz', 'costi_nazionale', 'pensiero', 'ricerca', 'libro'):
             context_parts.append(f"--- {label}: {title} ---\n{text}")
         else:
             context_parts.append(f"--- {label}, Art. {c['num']} — {title} ---\n{text}")
@@ -313,6 +389,19 @@ async def chat(req: ChatRequest):
         seen.add(key)
         unique_chunks.append(c)
 
+    def _mk_excerpt(chunk: dict, max_chars: int = 320) -> str:
+        """Ritorna i primi ~320 caratteri del testo del chunk, con ellissi se troncato."""
+        txt = (chunk.get('text') or '').strip()
+        # Normalizza whitespace multipli
+        txt = ' '.join(txt.split())
+        if len(txt) <= max_chars:
+            return txt
+        # Taglia all'ultimo confine di parola prima del limite
+        cut = txt.rfind(' ', 0, max_chars)
+        if cut < max_chars * 0.6:
+            cut = max_chars
+        return txt[:cut].rstrip() + '…'
+
     citations = [
         Citation(
             id=c['id'],
@@ -323,6 +412,7 @@ async def chat(req: ChatRequest):
             area=c.get('area'),
             ricerca_id=c.get('ricerca_id'),
             capitolo_id=c.get('capitolo_id'),
+            excerpt=_mk_excerpt(c),
         )
         for c in unique_chunks[:4]  # Mostra max 4 fonti
     ]
