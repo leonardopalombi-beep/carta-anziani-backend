@@ -193,26 +193,26 @@ def retrieve(question: str, top_k: int = 6) -> list:
 
     # Intent economico: forza l'inclusione dei chunk costi_nazionale in cima
     if _has_economic_intent(set(tokens), question):
-        costi_chunks = [c for c in CORPUS if c.get('source') == 'costi_nazionale']
         # BM25 sui soli chunk costi per ordinarli per rilevanza
         costi_indices = [i for i, c in enumerate(CORPUS) if c.get('source') == 'costi_nazionale']
         costi_scored = sorted(costi_indices, key=lambda i: scores[i], reverse=True)
-        # Prendi top-8 dei costi, sempre inclusa la sezione 14 (riconciliazioni)
-        top_costi_indices = costi_scored[:8]
-        # Assicura sempre la presenza dei chunk 14* (riconciliazione top-down vs bottom-up)
+        # Top-5 costi BM25 + sempre i chunk sez.14 (riconciliazioni bottom-up)
+        top_costi_indices = list(costi_scored[:5])
         for i, c in enumerate(CORPUS):
             if c.get('id', '').startswith('costi-14') and i not in top_costi_indices:
                 top_costi_indices.append(i)
         top_costi = [CORPUS[i] for i in top_costi_indices]
-        # Unisci: prima i costi (autorevoli per domande economiche), poi il resto del BM25
-        # deduplicato per id
+        # Unisci: prima i costi (autorevoli), poi top-3 del BM25 originale, deduplicato
         seen_ids = {c.get('id') for c in top_costi}
         merged = list(top_costi)
-        for c in top_chunks:
+        for c in top_chunks[:3]:
             if c.get('id') not in seen_ids:
                 merged.append(c)
                 seen_ids.add(c.get('id'))
-        return merged[:top_k + 10]  # espande il budget per fare spazio alla sezione costi
+        # Cap totale a top_k + 6 per contenere il prompt (evita 500 da payload troppo grande)
+        result = merged[:top_k + 6]
+        print(f'[retrieve] economic intent: {len(result)} chunks (costi={len([c for c in result if c.get("source") == "costi_nazionale"])})')
+        return result
 
     return top_chunks
 
@@ -362,10 +362,13 @@ async def chat(req: ChatRequest):
                "Chatbot is available only in the internal preview. "
                "For public deployment, complete the autonomous deploy on Fly.io/Render — see DEPLOY.md.")
         return ChatResponse(answer=msg, citations=[])
+    # Log dimensione prompt per diagnostica
+    _ctx_chars = sum(len(m.get('content', '')) for m in messages) + len(system)
+    print(f'[chat] prompt size: {_ctx_chars} chars (~{_ctx_chars // 4} tokens), {len(chunks)} chunks, question={req.question[:80]!r}')
     try:
         answer = call_claude(system, messages, max_tokens=2048)
     except httpx.HTTPStatusError as e:
-        print(f"[chat] Anthropic HTTP error {e.response.status_code}: {e.response.text[:300]}")
+        print(f"[chat] Anthropic HTTP error {e.response.status_code}: {e.response.text[:500]}")
         err_msg = ("Servizio temporaneamente non disponibile. Riprova tra qualche istante."
                    if req.lang == 'it' else
                    "Service temporarily unavailable. Please try again in a moment.")
