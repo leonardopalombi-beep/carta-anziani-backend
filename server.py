@@ -314,11 +314,13 @@ RULES:
         label = c['source_label_it'] if is_it else (c['source_label_en'] or c['source_label_it'])
         text = c['text'] if (is_it or not c.get('text_en')) else c['text_en']
         title = c['title'] if is_it else (c.get('title_en') or c['title'])
-        # I chunk di 'front' (Prefazione/Premessa/Introduzione) e i Piani non hanno numero articolo tradizionale
-        if c.get('source') in ('front', 'pnc', 'pnd', 'dm77', 'ra_reg', 'rsa_reg', 'rsa_naz', 'adi_reg', 'adi_naz', 'sad_reg', 'sad_naz', 'costi_nazionale', 'pensiero', 'ricerca', 'libro'):
+        # I chunk di 'front' (Prefazione/Premessa/Introduzione) e i Piani non hanno numero articolo tradizionale.
+        # Safe fallback: se manca 'num', usiamo il titolo senza 'Art. N' (evita KeyError).
+        _num = c.get('num')
+        if _num is None:
             context_parts.append(f"--- {label}: {title} ---\n{text}")
         else:
-            context_parts.append(f"--- {label}, Art. {c['num']} — {title} ---\n{text}")
+            context_parts.append(f"--- {label}, Art. {_num} — {title} ---\n{text}")
     context = '\n\n'.join(context_parts)
 
     if is_it:
