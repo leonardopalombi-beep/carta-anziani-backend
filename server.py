@@ -21,7 +21,17 @@ from anthropic import Anthropic
 
 # --- Setup ---
 HERE = pathlib.Path(__file__).parent
-CORPUS = json.loads((HERE / 'corpus.json').read_text())
+_CORPUS_PATH = HERE / 'corpus.json'
+CORPUS = json.loads(_CORPUS_PATH.read_text())
+print(f'[boot] Loaded corpus from {_CORPUS_PATH.resolve()} — {len(CORPUS)} chunks')
+try:
+    _sources = {}
+    for _c in CORPUS:
+        _s = _c.get('source', '?')
+        _sources[_s] = _sources.get(_s, 0) + 1
+    print(f'[boot] Corpus sources: {dict(sorted(_sources.items(), key=lambda x: -x[1]))}')
+except Exception as _e:
+    print(f'[boot] Could not summarize corpus: {_e}')
 
 # Prepara BM25 tokenizzato per italiano (e inglese quando disponibile)
 def tokenize(text: str) -> list:
