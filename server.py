@@ -127,7 +127,7 @@ class Citation(BaseModel):
     id: str
     title: str
     source: str
-    num: int
+    num: Optional[int] = None  # articoli Carta/leggi hanno un numero; costi_nazionale/pensiero/libro/ricerca no
     articolo_id: Optional[str] = None
     area: Optional[str] = None
     ricerca_id: Optional[str] = None
@@ -410,7 +410,7 @@ async def chat(req: ChatRequest):
             id=c['id'],
             title=c['title'] if req.lang == 'it' else (c.get('title_en') or c['title']),
             source=c['source_label_it'] if req.lang == 'it' else (c['source_label_en'] or c['source_label_it']),
-            num=c['num'],
+            num=c.get('num'),
             articolo_id=c.get('articolo_id'),
             area=c.get('area'),
             ricerca_id=c.get('ricerca_id'),
