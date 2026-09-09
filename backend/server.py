@@ -166,17 +166,125 @@ def _has_economic_intent(tokens_set: set, raw_question: str) -> bool:
         return True
     return False
 
+# --- Cross-lingual query expansion IT->EN per pescare chunk EN (rapporti internazionali) ---
+IT_EN_EXPANSIONS = {
+    'anziano': ['older', 'elderly', 'person'],
+    'anziani': ['older', 'persons', 'elderly', 'people'],
+    'vecchiaia': ['old', 'age', 'ageing', 'aging'],
+    'invecchiamento': ['ageing', 'aging'],
+    'ageismo': ['ageism', 'ageist'],
+    'etarismo': ['ageism', 'ageist'],
+    'salute': ['health'],
+    'sanità': ['health', 'healthcare'],
+    'sanitario': ['health', 'healthcare'],
+    'malattia': ['disease', 'illness'],
+    'malattie': ['diseases'],
+    'demenza': ['dementia'],
+    'fragilità': ['frailty', 'frail'],
+    'disabilità': ['disability'],
+    'autosufficienza': ['functional', 'ability', 'autonomy'],
+    'non-autosufficienza': ['dependency', 'dependence', 'disability'],
+    'assistenza': ['care', 'assistance'],
+    'cura': ['care'],
+    'cure': ['care'],
+    'domiciliare': ['home', 'community'],
+    'residenziale': ['residential', 'institutional'],
+    'domicilio': ['home'],
+    'famiglia': ['family'],
+    'famiglie': ['families'],
+    'caregiver': ['caregiver', 'carer'],
+    'povertà': ['poverty', 'poor'],
+    'reddito': ['income'],
+    'pensione': ['pension'],
+    'pensioni': ['pensions'],
+    'popolazione': ['population'],
+    'demografia': ['demographic', 'demography'],
+    'demografico': ['demographic'],
+    'proiezioni': ['projections', 'projected'],
+    'crescita': ['growth', 'increase'],
+    'mortalità': ['mortality', 'death'],
+    'sopravvivenza': ['survival'],
+    'longevità': ['longevity', 'life', 'expectancy'],
+    'discriminazione': ['discrimination'],
+    'diritti': ['rights'],
+    'diritto': ['right'],
+    'dignità': ['dignity'],
+    'abuso': ['abuse'],
+    'abusi': ['abuse', 'violence'],
+    'violenza': ['violence'],
+    'stereotipi': ['stereotypes'],
+    'pregiudizi': ['prejudice', 'bias'],
+    'donne': ['women'],
+    'donna': ['women'],
+    'uomini': ['men'],
+    'genere': ['gender'],
+    'europa': ['europe', 'european', 'eu'],
+    'italia': ['italy'],
+    'mondiale': ['global', 'world'],
+    'globale': ['global', 'world'],
+    'internazionale': ['international'],
+    'oms': ['who'],
+    'onu': ['un', 'united', 'nations', 'undesa'],
+    'covid': ['covid', 'pandemic'],
+    'benessere': ['well', 'being', 'wellbeing'],
+    'solitudine': ['loneliness', 'isolation'],
+    'isolamento': ['isolation', 'loneliness'],
+    'sociale': ['social'],
+    'inclusione': ['inclusion'],
+    'esclusione': ['exclusion'],
+    'partecipazione': ['participation'],
+    'lavoro': ['work', 'employment'],
+    'volontariato': ['volunteering', 'volunteer'],
+}
+
+# Fonti internazionali: pattern -> id_prefix del report da boostare
+INTL_SOURCE_TRIGGERS = [
+    (('who', 'oms', 'world', 'report', 'ageing', 'health'), 'intl-who-wra2015'),
+    (('who', 'oms', 'ageism', 'ageismo', 'etarismo', 'global', 'report'), 'intl-who-ageism2021'),
+    (('undesa', 'onu', 'un', 'world', 'population', 'ageing', 'popolazione'), 'intl-undesa-wpa2023'),
+    (('undesa', 'onu', 'un', 'world', 'social', 'report', 'leaving', 'behind'), 'intl-undesa-wsr2023'),
+    (('eurostat', 'europa', 'europe', 'european', 'eu', 'ageing'), 'intl-eurostat-ae2020'),
+    (('helpage', 'agewatch', 'insights'), 'intl-helpage-insights2018'),
+    (('helpage', 'humanitarian', 'crisis', 'crisi', 'emergenza', 'disaster'), 'intl-helpage-outofsight2022'),
+]
+
+def _expand_query_multilingual(tokens: list) -> list:
+    """Aggiunge equivalenti inglesi dei termini italiani nel token set,
+    così BM25 può pescare chunk EN (rapporti WHO/UNDESA/Eurostat/HelpAge)."""
+    expanded = list(tokens)
+    for t in tokens:
+        if t in IT_EN_EXPANSIONS:
+            expanded.extend(IT_EN_EXPANSIONS[t])
+    return expanded
+
+def _detect_intl_source(tokens: set, question_lower: str) -> str | None:
+    """Se la query menziona esplicitamente un rapporto internazionale, ritorna
+    l'id_prefix del report da boostare. Match a partire da 2 termini trigger."""
+    best_prefix = None
+    best_hits = 0
+    for triggers, prefix in INTL_SOURCE_TRIGGERS:
+        hits = sum(1 for t in triggers if t in tokens or t in question_lower)
+        if hits >= 2 and hits > best_hits:
+            best_hits = hits
+            best_prefix = prefix
+    return best_prefix
+
+
 def retrieve(question: str, top_k: int = 6) -> list:
     """BM25 retrieval — restituisce i top-K chunks più rilevanti.
 
     Per domande generali/di sintesi, ricadiamo su TUTTI i 18 articoli della Carta.
     Per domande economiche, forziamo l'inclusione dei chunk della sezione Costi.
+    Per domande su fonti internazionali (WHO/UNDESA/Eurostat/HelpAge), boostiamo
+    la fonte pertinente e usiamo query expansion IT->EN per matching cross-lingual.
     """
     tokens = tokenize(question)
     if not tokens:
         return []
 
-    scores = BM25.get_scores(tokens)
+    # Query expansion cross-lingual: aggiungi equivalenti EN
+    expanded_tokens = _expand_query_multilingual(tokens)
+    scores = BM25.get_scores(expanded_tokens)
     top_idx = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
     top_chunks = [CORPUS[i] for i in top_idx if scores[i] > 0]
     max_score = max(scores) if len(scores) > 0 else 0
@@ -213,6 +321,19 @@ def retrieve(question: str, top_k: int = 6) -> list:
         result = merged[:top_k + 6]
         print(f'[retrieve] economic intent: {len(result)} chunks (costi={len([c for c in result if c.get("source") == "costi_nazionale"])})')
         return _ensure_carta_representation(result, scores, top_k=2)
+
+    # Boost fonte internazionale: se la query menziona un rapporto specifico
+    # (WHO/UNDESA/Eurostat/HelpAge), forziamo i top-2 chunk BM25 di quella fonte
+    intl_prefix = _detect_intl_source(set(tokens), question.lower())
+    if intl_prefix:
+        intl_indices = [i for i, c in enumerate(CORPUS) if str(c.get('id', '')).startswith(intl_prefix)]
+        intl_sorted = sorted(intl_indices, key=lambda i: scores[i], reverse=True)
+        boost_chunks = [CORPUS[i] for i in intl_sorted[:2] if scores[i] > 0]
+        if boost_chunks:
+            seen_ids = {c.get('id') for c in top_chunks}
+            merged = list(boost_chunks) + [c for c in top_chunks if c.get('id') not in {b.get('id') for b in boost_chunks}]
+            top_chunks = merged[:top_k + 2]
+            print(f'[retrieve] intl boost: {intl_prefix} +{len(boost_chunks)}')
 
     return _ensure_carta_representation(top_chunks, scores, top_k=2)
 
