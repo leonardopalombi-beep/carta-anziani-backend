@@ -75,7 +75,7 @@ HAS_REAL_KEY = _raw_key.startswith('sk-ant-')
 CHAT_ENABLED = USE_PPLX_PROXY or HAS_REAL_KEY
 _pplx_client = Anthropic() if USE_PPLX_PROXY else None
 
-def call_claude(system: str, messages: list, max_tokens: int = 8000) -> str:
+def call_claude(system: str, messages: list, max_tokens: int = 4500) -> str:
     """Chiamata a Claude via il canale appropriato."""
     if not CHAT_ENABLED:
         raise RuntimeError("Chatbot disabilitato: manca ANTHROPIC_API_KEY reale (formato sk-ant-...).")
@@ -275,7 +275,7 @@ REGOLE:
 - Se la risposta non è nei documenti forniti, dillo apertamente: "Su questo il corpus di riferimento non offre elementi diretti."
 - Non aggiungere opinioni personali né interpretazioni giuridiche vincolanti.
 - Usa un registro pacato, informativo, adatto a lettori non specialisti.
-- **Regola di densità**: prediligi prosa densa e informativa; per domande esplorative resta entro **massimo 4-5 sezioni** o 8-10 paragrafi complessivi. Evita elenchi esaustivi quando bastano pochi esempi rappresentativi. Meglio profondità mirata che ampiezza enciclopedica.
+- **Regola di densità (rigida)**: prosa densa, non enciclopedica. Per domande esplorative: **massimo 4 sezioni** e 6-8 paragrafi complessivi. Per domande normative o puntuali: 2-3 paragrafi. Se una lista è indispensabile, massimo 5 voci brevi. Meglio pochi esempi ben scelti che una rassegna completa. La risposta deve stare comodamente entro ~3000 parole.
 - **REGOLA TABELLE (obbligatoria)**: se usi una tabella markdown, formatta ogni riga su UNA SOLA LINEA di testo, mai spezzata su più righe. Il formato è GFM standard:
   | Colonna A | Colonna B | Colonna C |
   |---|---|---|
@@ -331,7 +331,7 @@ RULES:
 - If the answer is not in the provided documents, say so openly: "The reference corpus does not directly address this."
 - Do not add personal opinions or binding legal interpretations.
 - Use a calm, informative tone suitable for non-specialist readers.
-- **Density rule**: prefer dense, informative prose; for exploratory questions stay within **maximum 4-5 sections** or 8-10 paragraphs overall. Avoid exhaustive lists when a few representative examples suffice. Prefer targeted depth to encyclopedic breadth.
+- **Density rule (strict)**: dense, non-encyclopedic prose. For exploratory questions: **maximum 4 sections** and 6-8 paragraphs overall. For normative or targeted questions: 2-3 paragraphs. If a list is indispensable, maximum 5 short items. Better a few well-chosen examples than a complete survey. Answer must fit comfortably within ~3000 words.
 - **TABLE RULE (mandatory)**: if you use a markdown table, format every row on a SINGLE line of text, never split across multiple lines. Use standard GFM:
   | Column A | Column B | Column C |
   |---|---|---|
@@ -398,7 +398,7 @@ async def chat(req: ChatRequest):
     _ctx_chars = sum(len(m.get('content', '')) for m in messages) + len(system)
     print(f'[chat] prompt size: {_ctx_chars} chars (~{_ctx_chars // 4} tokens), {len(chunks)} chunks, question={req.question[:80]!r}')
     try:
-        answer = call_claude(system, messages, max_tokens=8000)
+        answer = call_claude(system, messages, max_tokens=4500)
     except httpx.HTTPStatusError as e:
         print(f"[chat] Anthropic HTTP error {e.response.status_code}: {e.response.text[:500]}")
         err_msg = ("Servizio temporaneamente non disponibile. Riprova tra qualche istante."
