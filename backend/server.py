@@ -212,9 +212,36 @@ def retrieve(question: str, top_k: int = 6) -> list:
         # Cap totale a top_k + 6 per contenere il prompt (evita 500 da payload troppo grande)
         result = merged[:top_k + 6]
         print(f'[retrieve] economic intent: {len(result)} chunks (costi={len([c for c in result if c.get("source") == "costi_nazionale"])})')
-        return result
+        return _ensure_carta_representation(result, scores, top_k=2)
 
-    return top_chunks
+    return _ensure_carta_representation(top_chunks, scores, top_k=2)
+
+
+def _ensure_carta_representation(chunks: list, scores, top_k: int = 2) -> list:
+    """Garantisce che i top-K chunk della Carta con score BM25 > 0 siano sempre presenti.
+
+    La Carta è il documento normativo di riferimento del progetto: quando ci sono
+    match tematici (score BM25 > 0) su suoi articoli, devono comparire nel contesto
+    anche se altri chunk di Paglia/Sant'Egidio hanno score più alti in valore assoluto.
+    Questo evita che risposte tematiche (povertà, dignità, autodeterminazione, ecc.)
+    non citino direttamente la Carta pur avendone materiale rilevante.
+    """
+    already_ids = {id(c) for c in chunks}
+    # Trova chunk carta ordinati per score BM25 discendente, solo score > 0
+    carta_indices = [i for i, c in enumerate(CORPUS) if c.get('source') == 'carta' and scores[i] > 0]
+    carta_sorted = sorted(carta_indices, key=lambda i: scores[i], reverse=True)[:top_k]
+    # Aggiungi quelli non già presenti
+    to_add = []
+    for i in carta_sorted:
+        c = CORPUS[i]
+        if id(c) not in already_ids:
+            to_add.append(c)
+            already_ids.add(id(c))
+    if to_add:
+        print(f'[retrieve] boost Carta: +{len(to_add)} chunk (scores={[round(scores[i],2) for i in carta_sorted[:len(to_add)]]})')
+    # Metti la Carta boostata all'inizio (subito dopo eventuali costi/documenti forzati)
+    # ma solo se ha score sensato; altrimenti in coda
+    return chunks + to_add
 
 
 def build_prompt(question: str, chunks: list, lang: str, history: list) -> tuple:
@@ -272,6 +299,7 @@ REGOLE:
 - Per le pubblicazioni scientifiche cita autori, rivista e anno, es.: «Gilardi et al., European Journal of Public Health 2018», oppure «Liotta et al., PLoS ONE 2020».
 - Riporta sempre i dati quantitativi (n=..., HR=..., IC95%, p-value) quando presenti negli abstract.
 - Per domande su persone menzionate nella Prefazione o nella Premessa (es. autori, curatori, membri della Commissione), riporta fedelmente quanto scritto in quei testi.
+- **PRIORITÀ CARTA (obbligatoria)**: quando il contesto include uno o più chunk della Carta pertinenti alla domanda (autodeterminazione, dignità, integrità psico-fisica, abusi ed etarismo, sostentamento e reddito, salute, abitazione, mobilità, relazioni, partecipazione, cura, ecc.), DEVI citarli esplicitamente in apertura di risposta con "Carta, art. X.Y" e riportarne il testo o il commento pertinente. La Carta è il documento normativo di riferimento del progetto: non può essere ignorata o solo evocata quando ha materiale diretto sul tema.
 - Se la risposta non è nei documenti forniti, dillo apertamente: "Su questo il corpus di riferimento non offre elementi diretti."
 - Non aggiungere opinioni personali né interpretazioni giuridiche vincolanti.
 - Usa un registro pacato, informativo, adatto a lettori non specialisti.
@@ -328,6 +356,7 @@ RULES:
 - For questions about people mentioned in the Foreword or Introduction (e.g. authors, curators, Commission members), report faithfully what those texts state.
 - For presentations in the «Trials» (Sperimentazioni) section, cite as: «Trial [name] — [speaker], [month year]» (e.g. «Trial VIVAnet — Palombi, June 2026», «Trial VIVAnet Web TV — Fondazione Età Grande, August 2026»); report slide numbers when quoting specific figures (beds, budget, population, outcomes).
 - For questions on trials (VIVAnet and pilot projects on telemedicine/proximity/Web TV for older persons), draw FIRST on the project's overview chunk for the general framing (goals, population, partners, legal basis) and THEN on the topical chunks of specific presentations for operational detail.
+- **CHARTER PRIORITY (mandatory)**: when the context includes one or more Charter chunks relevant to the question (self-determination, dignity, physical-psychological integrity, abuse and ageism, sustenance and income, health, housing, mobility, relationships, participation, care, etc.), you MUST cite them explicitly at the opening of your answer with "Charter, art. X.Y" and report the pertinent text or commentary. The Charter is the project's normative reference document: it cannot be ignored or merely alluded to when it holds direct material on the topic.
 - If the answer is not in the provided documents, say so openly: "The reference corpus does not directly address this."
 - Do not add personal opinions or binding legal interpretations.
 - Use a calm, informative tone suitable for non-specialist readers.
