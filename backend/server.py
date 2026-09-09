@@ -235,6 +235,37 @@ IT_EN_EXPANSIONS = {
     'partecipazione': ['participation'],
     'lavoro': ['work', 'employment'],
     'volontariato': ['volunteering', 'volunteer'],
+    # Contesti umanitari / emergenze
+    'umanitario': ['humanitarian'],
+    'umanitari': ['humanitarian'],
+    'umanitaria': ['humanitarian'],
+    'umanitarie': ['humanitarian'],
+    'emergenza': ['emergency', 'crisis', 'disaster'],
+    'emergenze': ['emergencies', 'crises'],
+    'crisi': ['crisis', 'crises'],
+    'guerra': ['war', 'conflict', 'armed'],
+    'guerre': ['wars', 'conflicts'],
+    'conflitto': ['conflict', 'war'],
+    'conflitti': ['conflicts'],
+    'rifugiati': ['refugees', 'refugee'],
+    'rifugiato': ['refugee'],
+    'sfollati': ['displaced', 'idps'],
+    'sfollato': ['displaced'],
+    'migranti': ['migrants', 'migrant', 'migration'],
+    'migrante': ['migrant'],
+    'disastro': ['disaster'],
+    'disastri': ['disasters'],
+    'catastrofe': ['disaster', 'catastrophe'],
+    'catastrofi': ['disasters'],
+    'pandemia': ['pandemic'],
+    'evacuazione': ['evacuation'],
+    'soccorso': ['relief', 'response', 'assistance'],
+    'soccorsi': ['relief', 'response'],
+    'protezione': ['protection'],
+    'invisibili': ['invisible'],
+    'tutela': ['protection', 'safeguarding'],
+    'inclusi': ['included', 'inclusion'],
+    'esclusi': ['excluded'],
 }
 
 # Fonti internazionali: pattern -> id_prefix del report da boostare
@@ -245,7 +276,7 @@ INTL_SOURCE_TRIGGERS = [
     (('undesa', 'onu', 'un', 'world', 'social', 'report', 'leaving', 'behind'), 'intl-undesa-wsr2023'),
     (('eurostat', 'europa', 'europe', 'european', 'eu', 'ageing'), 'intl-eurostat-ae2020'),
     (('helpage', 'agewatch', 'insights'), 'intl-helpage-insights2018'),
-    (('helpage', 'humanitarian', 'crisis', 'crisi', 'emergenza', 'disaster'), 'intl-helpage-outofsight2022'),
+    (('helpage', 'humanitarian', 'crisis', 'crisi', 'emergenza', 'emergency', 'disaster', 'disastro', 'catastrofe', 'guerra', 'conflict', 'war', 'rifugiati', 'refugees', 'sfollati', 'displaced', 'umanitario', 'umanitari', 'umanitaria'), 'intl-helpage-outofsight2022'),
 ]
 
 def _expand_query_multilingual(tokens: list) -> list:
