@@ -60,42 +60,40 @@ def chunkify_article(art):
         
         text = '\n\n'.join(parts)
         
-        # Split se troppo lungo (>3000 char): tengo articolo+comma intero, spezzo il commento
+        def _make(part_suffix, body_text, part_num=None):
+            """Costruisce un chunk con TUTTI i campi che il server si aspetta."""
+            cid = f'carta-{num}-{n}' + (f'-p{part_num}' if part_num else '')
+            ct = chunk_title + (f' (parte {part_num})' if part_num else '')
+            return {
+                'id': cid,
+                'source': 'carta',
+                'source_label_it': 'Carta dei diritti degli anziani',
+                'source_label_en': 'Charter of the Rights of Older Persons',
+                'article_id': f'{num}',
+                'section_id': f'{num}.{n}',
+                'articolo_id': f'{num}',
+                'num': str(num),
+                'title': ct,
+                'title_en': ct,  # per ora IT usato in EN come fallback (traduzione EN può arrivare dopo)
+                'text': body_text,
+                'text_en': '',  # nessun testo EN separato: il server ricade su 'text'
+            }
+
+        # Split se troppo lungo (>3500 char): tengo articolo+comma intero, spezzo il commento
         if len(text) > 3500 and commento:
-            # Chunk 1: articolo + comma + prima metà commento
             paras = commento.split('\n\n')
             mid = len(paras) // 2
             first = '\n\n'.join(paras[:mid]) if mid > 0 else ''
             second = '\n\n'.join(paras[mid:])
             if first:
                 text1 = f"{chunk_title}\n\nTesto del comma: {comma}\n\nCommento (parte 1): {first}"
-                chunks.append({
-                    'source': 'carta',
-                    'title': chunk_title + ' (parte 1)',
-                    'text': text1,
-                    'meta': {'articolo': str(num), 'comma': str(n), 'part': 1}
-                })
                 text2 = f"{chunk_title}\n\nTesto del comma: {comma}\n\nCommento (parte 2): {second}"
-                chunks.append({
-                    'source': 'carta',
-                    'title': chunk_title + ' (parte 2)',
-                    'text': text2,
-                    'meta': {'articolo': str(num), 'comma': str(n), 'part': 2}
-                })
+                chunks.append(_make(' (parte 1)', text1, part_num=1))
+                chunks.append(_make(' (parte 2)', text2, part_num=2))
             else:
-                chunks.append({
-                    'source': 'carta',
-                    'title': chunk_title,
-                    'text': text,
-                    'meta': {'articolo': str(num), 'comma': str(n)}
-                })
+                chunks.append(_make('', text))
         else:
-            chunks.append({
-                'source': 'carta',
-                'title': chunk_title,
-                'text': text,
-                'meta': {'articolo': str(num), 'comma': str(n)}
-            })
+            chunks.append(_make('', text))
     
     return chunks
 
