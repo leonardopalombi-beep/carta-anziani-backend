@@ -37,6 +37,17 @@ if _CARTA_EN_PATH.exists():
             if _t:
                 _c['title_en'] = _t
     CORPUS.extend(_carta_en)
+# Sezioni del sito (Costi, ADI/SAD, Sperimentazioni, testi introduttivi, Poesie...) in IT+EN,
+# generate da build_site_chunks.py; en_overlay aggiunge l'inglese ai chunk RA/RSA esistenti.
+_SITE_PATH = HERE / 'site_chunks.json'
+if _SITE_PATH.exists():
+    _site = json.loads(_SITE_PATH.read_text())
+    _ov = _site.get('en_overlay', {})
+    for _c in CORPUS:
+        if not _c.get('text_en') and _c.get('id') in _ov:
+            _c['text_en'] = _ov[_c['id']]
+    _have = {c.get('id') for c in CORPUS}
+    CORPUS.extend(c for c in _site.get('chunks', []) if c['id'] not in _have)
 print(f'[boot] Loaded corpus from {_CORPUS_PATH.resolve()} — {len(CORPUS)} chunks')
 try:
     _sources = {}
@@ -675,7 +686,20 @@ User question: {question}"""
 @app.post('/api/chat', response_model=ChatResponse)
 async def chat(req: ChatRequest):
     global LAST_LLM_ERROR
-    chunks = retrieve(req.question, top_k=6, lang=req.lang)
+    # Domande in inglese: gran parte dell'archivio (Paglia, Sant'Egidio, Commissione, ricerche)
+    # e' solo in italiano. Si aggiungono alla ricerca parole chiave italiane equivalenti.
+    search_q = req.question
+    if req.lang != 'it' and CHAT_ENABLED:
+        try:
+            kw = call_claude(
+                "Translate the user's question into Italian search keywords for a document archive on ageing, "
+                "elderly care, Italian law and the Charter of the Rights of Older Persons. Reply with keywords only, "
+                "space-separated, no explanations. Keep law numbers, article numbers and proper names.",
+                [{"role": "user", "content": req.question}], max_tokens=80)
+            search_q = req.question + ' ' + kw.strip()[:400]
+        except Exception as _e:
+            print(f'[chat] query translation skipped: {_e}')
+    chunks = retrieve(search_q, top_k=6, lang=req.lang)
     if not chunks:
         # Nessun match: risposta polite
         msg = ("Sulla base della Carta e della normativa di riferimento (L. 328/2000, L. 33/2023, DLgs 29/2024, DPCM LEA 2017, DM 77/2022, L. 38/2010, Piani nazionali cronicit\u00e0 e demenze) non trovo elementi diretti per rispondere a questa domanda. Prova a riformularla con termini pi\u00f9 specifici, ad esempio 'assistenza domiciliare integrata', 'prestazione universale' o 'cure palliative'."
