@@ -23,6 +23,20 @@ from anthropic import Anthropic
 HERE = pathlib.Path(__file__).parent
 _CORPUS_PATH = HERE / 'corpus.json'
 CORPUS = json.loads(_CORPUS_PATH.read_text())
+# Chunk inglesi della Carta (generati da build_carta_en_chunks.py): servono a far
+# funzionare il recupero delle domande in inglese, prima limitato ai testi italiani.
+_CARTA_EN_PATH = HERE / 'carta_en_chunks.json'
+if _CARTA_EN_PATH.exists():
+    _carta_en = json.loads(_CARTA_EN_PATH.read_text())
+    _en_titles = {}
+    for _c in _carta_en:
+        _en_titles.setdefault(_c['articolo_id'], _c['title_en'].split(' (part')[0])
+    for _c in CORPUS:
+        if _c.get('source') == 'carta' and not _c.get('text_en'):
+            _t = _en_titles.get(str(_c.get('articolo_id') or _c.get('num')))
+            if _t:
+                _c['title_en'] = _t
+    CORPUS.extend(_carta_en)
 print(f'[boot] Loaded corpus from {_CORPUS_PATH.resolve()} — {len(CORPUS)} chunks')
 try:
     _sources = {}
@@ -309,7 +323,32 @@ def _detect_intl_source(tokens: set, question_lower: str) -> str | None:
     return best_prefix
 
 
-def retrieve(question: str, top_k: int = 6) -> list:
+_ART_RE = re.compile(r'\b(?:article|articolo|art\.?)\s*(\d{1,2})\b', re.IGNORECASE)
+
+def _article_chunks(question: str, lang: str) -> list:
+    """Se la domanda cita un articolo della Carta (es. 'article 1', 'art. 5'),
+    restituisce i suoi chunk nella lingua della domanda (inglese o italiano)."""
+    if re.search(r'\b(?:legge|law|decreto|decree|d\.?\s?lgs|dlgs|l\.\s?\d)', question, re.IGNORECASE):
+        return []
+    m = _ART_RE.search(question)
+    if not m or not (1 <= int(m.group(1)) <= 18):
+        return []
+    n = m.group(1).lstrip('0')
+    want_en = lang == 'en'
+    sel = [c for c in CORPUS if c.get('source') == 'carta' and str(c.get('articolo_id') or c.get('num')) == n
+           and (c.get('lang') == 'en') == want_en]
+    return sel[:5]
+
+
+def retrieve(question: str, top_k: int = 6, lang: str = 'it') -> list:
+    art = _article_chunks(question, lang)
+    if art:
+        rest = [c for c in _retrieve(question, top_k) if c not in art]
+        return art + rest[:max(0, top_k - len(art))]
+    return _retrieve(question, top_k)
+
+
+def _retrieve(question: str, top_k: int = 6) -> list:
     """BM25 retrieval — restituisce i top-K chunks più rilevanti.
 
     Per domande generali/di sintesi, ricadiamo su TUTTI i 18 articoli della Carta.
@@ -568,7 +607,7 @@ User question: {question}"""
 @app.post('/api/chat', response_model=ChatResponse)
 async def chat(req: ChatRequest):
     global LAST_LLM_ERROR
-    chunks = retrieve(req.question, top_k=6)
+    chunks = retrieve(req.question, top_k=6, lang=req.lang)
     if not chunks:
         # Nessun match: risposta polite
         msg = ("Sulla base della Carta e della normativa di riferimento (L. 328/2000, L. 33/2023, DLgs 29/2024, DPCM LEA 2017, DM 77/2022, L. 38/2010, Piani nazionali cronicit\u00e0 e demenze) non trovo elementi diretti per rispondere a questa domanda. Prova a riformularla con termini pi\u00f9 specifici, ad esempio 'assistenza domiciliare integrata', 'prestazione universale' o 'cure palliative'."
