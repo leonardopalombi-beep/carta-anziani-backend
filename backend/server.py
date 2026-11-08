@@ -442,7 +442,27 @@ def _article_chunks(question: str, lang: str) -> list:
     return sel[:5]
 
 
+def _glossary_chunks(question: str) -> list:
+    """Sigle del glossario citate nella domanda (es. PUA, ADI, LEPS): aggiunge la voce di glossario."""
+    words = set(re.findall(r'[A-Za-z]{2,6}', question))
+    out = []
+    for c in CORPUS:
+        if c.get('source') != 'glossario':
+            continue
+        sig = c['title'].split('—')[1].strip() if '—' in c['title'] else ''
+        sigs = {x.strip() for x in re.split(r'[/ ]', sig) if x.strip().isupper() and len(x.strip()) >= 2}
+        if sigs & words:
+            out.append(c)
+    return out[:2]
+
+
 def retrieve(question: str, top_k: int = 6, lang: str = 'it') -> list:
+    gl = _glossary_chunks(question)
+    res = _retrieve_main(question, top_k, lang)
+    return gl + [c for c in res if c not in gl]
+
+
+def _retrieve_main(question: str, top_k: int = 6, lang: str = 'it') -> list:
     law = _law_article_chunks(question)
     if law:
         rest = [c for c in _retrieve(question, top_k) if c not in law]
