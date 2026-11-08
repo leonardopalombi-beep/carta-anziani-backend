@@ -394,6 +394,26 @@ def _psalm_chunks(question: str, scores) -> list:
     return out
 
 
+_SOURCE_INTENTS = [
+    (r"sant\W?\s?egidio", ('santegidio-v3',), 'salmi-'),
+    (r"\bpaglia\b", ('paglia-v3', 'pensiero', 'libro'), None),
+    (r"\bcommission[ei]?\b|\bcommission\b", ('commissione',), None),
+]
+
+def _source_chunks(question: str, scores, k: int = 4) -> list:
+    """Se la domanda nomina una fonte (Sant'Egidio, Paglia, Commissione), restituisce
+    i chunk piu' pertinenti di quella fonte, che altrimenti verrebbero sovrastati
+    dai rapporti internazionali e dalla Carta."""
+    out = []
+    for pat, srcs, excl in _SOURCE_INTENTS:
+        if re.search(pat, question, re.IGNORECASE):
+            idx = [i for i, c in enumerate(CORPUS) if c.get('source') in srcs
+                   and not (excl and c.get('id', '').startswith(excl))]
+            idx.sort(key=lambda i: scores[i], reverse=True)
+            out += [CORPUS[i] for i in idx[:k] if scores[i] > 0]
+    return out
+
+
 def _article_chunks(question: str, lang: str) -> list:
     """Se la domanda cita un articolo della Carta (es. 'article 1', 'art. 5'),
     restituisce i suoi chunk nella lingua della domanda (inglese o italiano)."""
@@ -420,6 +440,10 @@ def retrieve(question: str, top_k: int = 6, lang: str = 'it') -> list:
         if ps:
             rest = [c for c in _retrieve(question, top_k) if c not in ps]
             return ps + rest[:2]
+        src = _source_chunks(question, BM25.get_scores(tokens))
+        if src:
+            rest = [c for c in _retrieve(question, top_k) if c not in src]
+            return src + rest[:3]
     art = _article_chunks(question, lang)
     if art:
         rest = [c for c in _retrieve(question, top_k) if c not in art]
