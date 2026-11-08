@@ -308,7 +308,22 @@ def _expand_query_multilingual(tokens: list) -> list:
     for t in tokens:
         if t in IT_EN_EXPANSIONS:
             expanded.extend(IT_EN_EXPANSIONS[t])
+        if t in EN_IT_EXPANSIONS:
+            expanded.extend(EN_IT_EXPANSIONS[t])
     return expanded
+
+
+# Equivalenti italiani di termini inglesi: le domande in inglese devono raggiungere
+# anche i testi disponibili solo in italiano (Salmi, Sant'Egidio, Paglia, Commissione).
+EN_IT_EXPANSIONS = {
+    'psalm': ['salmo', 'salmi'], 'psalms': ['salmi', 'salmo'],
+    'bible': ['bibbia', 'biblico'], 'biblical': ['biblico', 'bibbia'],
+    'old': ['vecchio', 'vecchiaia'], 'elderly': ['anziano', 'anziani'],
+    'older': ['anziano', 'anziani'], 'ageing': ['invecchiamento'], 'aging': ['invecchiamento'],
+    'loneliness': ['solitudine'], 'dignity': ['dignità'], 'care': ['cura', 'assistenza'],
+    'home': ['domicilio', 'casa'], 'family': ['famiglia'], 'prayer': ['preghiera'],
+    'god': ['dio', 'signore'], 'wisdom': ['sapienza'], 'faith': ['fede'],
+}
 
 def _detect_intl_source(tokens: set, question_lower: str) -> str | None:
     """Se la query menziona esplicitamente un rapporto internazionale, ritorna
@@ -324,6 +339,49 @@ def _detect_intl_source(tokens: set, question_lower: str) -> str | None:
 
 
 _ART_RE = re.compile(r'\b(?:article|articolo|art\.?)\s*(\d{1,2})\b', re.IGNORECASE)
+
+_LAW_PATTERNS = [
+    ('l33', r'33\s*/\s*2023|\b(?:legge|law|l\.)\s*(?:n\.\s*)?33\b'),
+    ('dlgs29', r'29\s*/\s*2024|\b(?:decreto|decree|d\.?\s?lgs\.?|dlgs)\s*(?:legislativo\s*)?(?:n\.\s*)?29\b'),
+    ('l328', r'328\s*/\s*2000|\b(?:legge|law|l\.)\s*(?:n\.\s*)?328\b'),
+    ('l38', r'38\s*/\s*2010|\b(?:legge|law|l\.)\s*(?:n\.\s*)?38\b'),
+    ('lea2017', r'\blea\b|dpcm\s*(?:12\s*/\s*1\s*/\s*)?2017'),
+]
+
+def _law_article_chunks(question: str) -> list:
+    """Domande su un articolo preciso di una legge (es. 'art. 2 L. 33/2023'):
+    restituisce i chunk di quell'articolo."""
+    m = _ART_RE.search(question)
+    if not m:
+        return []
+    n = int(m.group(1)) if len(m.group(1)) <= 2 else None
+    for src, pat in _LAW_PATTERNS:
+        if re.search(pat, question, re.IGNORECASE):
+            return [c for c in CORPUS if c.get('source') == src and str(c.get('num')) == str(n)][:4]
+    return []
+
+
+def _psalm_chunks(question: str, scores) -> list:
+    """Domande sui Salmi: restituisce i salmi più pertinenti (o quello citato per numero)."""
+    if not re.search(r'psalm|salm', question, re.IGNORECASE):
+        return []
+    idx = [i for i, c in enumerate(CORPUS) if c.get('id', '').startswith('salmi-')]
+    m = re.search(r'(?:psalm|salmo)\s*(\d{1,3})', question, re.IGNORECASE)
+    if m:
+        hit = [CORPUS[i] for i in idx if str(CORPUS[i].get('num')) == m.group(1)]
+        if hit:
+            return hit[:4]
+    idx.sort(key=lambda i: scores[i], reverse=True)
+    out, seen = [], set()
+    for i in idx:  # un solo chunk per salmo, per coprirne di più
+        k = CORPUS[i].get('articolo_id')
+        if k in seen:
+            continue
+        seen.add(k); out.append(CORPUS[i])
+        if len(out) == 6:
+            break
+    return out
+
 
 def _article_chunks(question: str, lang: str) -> list:
     """Se la domanda cita un articolo della Carta (es. 'article 1', 'art. 5'),
@@ -341,6 +399,16 @@ def _article_chunks(question: str, lang: str) -> list:
 
 
 def retrieve(question: str, top_k: int = 6, lang: str = 'it') -> list:
+    law = _law_article_chunks(question)
+    if law:
+        rest = [c for c in _retrieve(question, top_k) if c not in law]
+        return law + rest[:max(0, top_k - len(law))]
+    tokens = _expand_query_multilingual(tokenize(question))
+    if tokens:
+        ps = _psalm_chunks(question, BM25.get_scores(tokens))
+        if ps:
+            rest = [c for c in _retrieve(question, top_k) if c not in ps]
+            return ps + rest[:2]
     art = _article_chunks(question, lang)
     if art:
         rest = [c for c in _retrieve(question, top_k) if c not in art]
