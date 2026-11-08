@@ -37,6 +37,17 @@ if _CARTA_EN_PATH.exists():
             if _t:
                 _c['title_en'] = _t
     CORPUS.extend(_carta_en)
+# Traduzione inglese integrale (di lavoro) di L. 33/2023 e D.Lgs. 29/2024: sostituisce
+# la sola sintesi in text_en, cosi' le risposte in inglese citano il testo completo.
+_LAW_EN_PATH = HERE / 'law_en.json'
+if _LAW_EN_PATH.exists():
+    _law_en = json.loads(_LAW_EN_PATH.read_text())
+    for _c in CORPUS:
+        _e = _law_en.get(_c.get('id'))
+        if _e and _e.get('commi'):
+            _c['text_en'] = (f"Art. {_c.get('num')} — {_e.get('title_en','')}\n\nSummary: {_e.get('summary','')}\n\n"
+                             "Full working translation (not legally binding):\n" +
+                             '\n'.join(f"{x['n']}. {x['text']}" for x in _e['commi']))
 # Sezioni del sito (Costi, ADI/SAD, Sperimentazioni, testi introduttivi, Poesie...) in IT+EN,
 # generate da build_site_chunks.py; en_overlay aggiunge l'inglese ai chunk RA/RSA esistenti.
 _SITE_PATH = HERE / 'site_chunks.json'
