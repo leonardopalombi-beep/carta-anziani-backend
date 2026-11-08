@@ -107,7 +107,12 @@ def call_claude(system: str, messages: list, max_tokens: int = 4500) -> str:
         resp = client.post(ANTHROPIC_URL, headers=headers, json=payload)
         resp.raise_for_status()
         data = resp.json()
-    return data['content'][0]['text']
+    # I modelli recenti possono restituire piu' blocchi (es. 'thinking' prima del testo):
+    # si concatenano solo i blocchi di tipo 'text'.
+    parts = [b.get('text', '') for b in data.get('content', []) if b.get('type') == 'text']
+    if not parts:
+        raise RuntimeError(f"Risposta senza testo (stop_reason={data.get('stop_reason')}, blocchi={[b.get('type') for b in data.get('content', [])]})")
+    return ''.join(parts)
 
 
 # --- API ---
