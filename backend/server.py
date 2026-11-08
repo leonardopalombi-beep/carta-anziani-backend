@@ -44,6 +44,8 @@ if _LAW_EN_PATH.exists():
     _law_en = json.loads(_LAW_EN_PATH.read_text())
     for _c in CORPUS:
         _e = _law_en.get(_c.get('id'))
+        if _e and _e.get('text_it'):
+            _c['text'] = _e['text_it']  # testo italiano mancante nel corpus originale (es. D.Lgs. 29/2024 art. 7)
         if _e and _e.get('commi'):
             _c['text_en'] = (f"Art. {_c.get('num')} — {_e.get('title_en','')}\n\nSummary: {_e.get('summary','')}\n\n"
                              "Full working translation (not legally binding):\n" +
