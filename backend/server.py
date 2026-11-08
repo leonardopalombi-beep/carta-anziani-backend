@@ -61,7 +61,10 @@ print(f"Corpus caricato: {len(CORPUS)} chunks")
 import os
 
 # Model id: Perplexity usa nomi diversi; Anthropic usa 'claude-sonnet-4-5-20250929'
-DIRECT_ANTHROPIC_MODEL = 'claude-sonnet-4-5-20250929'
+# claude-sonnet-4-5-20250929 e' deprecato e verra' ritirato il 30/11/2026: si passa a claude-sonnet-5-5.
+# Il modello puo' essere sovrascritto con la variabile d'ambiente ANTHROPIC_MODEL.
+DIRECT_ANTHROPIC_MODEL = os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-5-5')
+LAST_LLM_ERROR = None  # ultimo errore del canale LLM, esposto (senza segreti) in /api/health
 PPLX_PROXY_MODEL = 'claude_sonnet_4_5'
 ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 
@@ -559,6 +562,7 @@ User question: {question}"""
 
 @app.post('/api/chat', response_model=ChatResponse)
 async def chat(req: ChatRequest):
+    global LAST_LLM_ERROR
     chunks = retrieve(req.question, top_k=6)
     if not chunks:
         # Nessun match: risposta polite
@@ -584,6 +588,12 @@ async def chat(req: ChatRequest):
         answer = call_claude(system, messages, max_tokens=4500)
     except httpx.HTTPStatusError as e:
         print(f"[chat] Anthropic HTTP error {e.response.status_code}: {e.response.text[:500]}")
+        try:
+            _err = e.response.json().get("error", {})
+        except Exception:
+            _err = {}
+        LAST_LLM_ERROR = {"http_status": e.response.status_code, "type": _err.get("type"),
+                          "message": (_err.get("message") or "")[:200]}
         err_msg = ("Servizio temporaneamente non disponibile. Riprova tra qualche istante."
                    if req.lang == 'it' else
                    "Service temporarily unavailable. Please try again in a moment.")
@@ -591,6 +601,7 @@ async def chat(req: ChatRequest):
     except Exception as e:
         import traceback
         print(f"[chat] Unexpected error: {type(e).__name__}: {e}")
+        LAST_LLM_ERROR = {"type": type(e).__name__, "message": str(e)[:200]}
         traceback.print_exc()
         err_msg = ("Servizio temporaneamente non disponibile. Riprova tra qualche istante."
                    if req.lang == 'it' else
@@ -640,4 +651,5 @@ async def chat(req: ChatRequest):
 
 @app.get('/api/health')
 async def health():
-    return {"status": "ok", "chunks": len(CORPUS)}
+    return {"status": "ok", "chunks": len(CORPUS), "model": DIRECT_ANTHROPIC_MODEL,
+            "chat_enabled": CHAT_ENABLED, "last_llm_error": LAST_LLM_ERROR}
