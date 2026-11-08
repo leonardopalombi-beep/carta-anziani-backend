@@ -119,6 +119,16 @@ if po:
             f"Poesie — {p['autore']}, «{p['titolo']}»", f"Poems — {p['autore']}, “{e.get('titolo_en') or e.get('titolo') or p['titolo']}”",
             (clean(p.get('nota') or '') + '\n\n' + ptxt(p)).strip(), (clean(e.get('nota') or '') + '\n\n' + ptxt(e)).strip() if e else '')
 
+gl = J('glossario.json')
+if gl:
+    for v in gl['voci']:
+        sig = (v['sigla'] + ' — ') if v.get('sigla') else ''
+        OUT.append({'id': 'glossario-' + re.sub(r'[^a-z0-9]+', '-', (v.get('sigla') or v['it']).lower()).strip('-'),
+                    'source': 'glossario', 'source_label_it': 'Glossario internazionale', 'source_label_en': 'International glossary',
+                    'title': f"Glossario — {sig}{v['it']}", 'title_en': f"Glossary — {sig}{v['it']} ({v['en']})",
+                    'text': f"{sig}{v['it']} (in inglese: {v['en']}). {v['def_it']}",
+                    'text_en': f"{sig}{v['it']} — English: {v['en']}. {v['def_en']}"})
+
 overlay = {}
 for fn, prefix in (('rsa_per_regione.json', 'rsa'), ('ra_per_regione.json', 'ra')):
     for i, r in enumerate(J('en/' + fn) or [], 1):
